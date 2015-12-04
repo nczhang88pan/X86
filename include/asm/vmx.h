@@ -51,12 +51,13 @@
 #define CPU_BASED_USE_MSR_BITMAPS               0x10000000
 #define CPU_BASED_MONITOR_EXITING               0x20000000
 #define CPU_BASED_PAUSE_EXITING                 0x40000000
-#define CPU_BASED_ACTIVATE_SECONDARY_CONTROLS   0x80000000
+#define CPU_BASED_ACTIVATE_SECONDARY_CONTROLS   0x80000000 //指示secondary是否使用
 
 #define CPU_BASED_ALWAYSON_WITHOUT_TRUE_MSR	0x0401e172
 
 /*
  * Definitions of Secondary Processor-Based VM-Execution Controls.
+ * 如果要支持vm function secondary processor-based vmec 的第 13位（从bit 0 算起）需要设置为1 
  */
 #define SECONDARY_EXEC_VIRTUALIZE_APIC_ACCESSES 0x00000001
 #define SECONDARY_EXEC_ENABLE_EPT               0x00000002
@@ -69,10 +70,10 @@
 #define SECONDARY_EXEC_VIRTUAL_INTR_DELIVERY    0x00000200
 #define SECONDARY_EXEC_PAUSE_LOOP_EXITING	0x00000400
 #define SECONDARY_EXEC_ENABLE_INVPCID		0x00001000
+#define SECONDARY_EXEC_VM_FUNCTION      0x00002000    //vm function secondary processor-based  enable vm function
 #define SECONDARY_EXEC_SHADOW_VMCS              0x00004000
 #define SECONDARY_EXEC_ENABLE_PML               0x00020000
 #define SECONDARY_EXEC_XSAVES			0x00100000
-
 
 #define PIN_BASED_EXT_INTR_MASK                 0x00000001
 #define PIN_BASED_NMI_EXITING                   0x00000008
