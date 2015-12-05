@@ -447,6 +447,12 @@ enum vmcs_field {
 #define ASM_VMX_VMXON_RAX         ".byte 0xf3, 0x0f, 0xc7, 0x30"
 #define ASM_VMX_INVEPT		  ".byte 0x66, 0x0f, 0x38, 0x80, 0x08"
 #define ASM_VMX_INVVPID		  ".byte 0x66, 0x0f, 0x38, 0x81, 0x08"
+/*
+*在EPTP switch成功执行后，可能会对客户物理地址的翻译造成影响，可能会对改变CR3中的客户物理地址相对应的值。
+*ASM_VMX_VMFUNC vmfunc指令 操作码为：0F 01 D4 
+*ECX用于从EPTP list选择相应的EPTP，EAX用于选择VMFUNCTIONs中的函数，EPTP switch为0，EAX =0
+*/
+#define ASM_VMX_VMFUNC        ".byte 0x0f, 0x01, 0xd4" 
 
 struct vmx_msr_entry {
 	u32 index;

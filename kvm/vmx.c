@@ -1085,6 +1085,12 @@ static inline bool cpu_has_vmx_invpcid(void)
 		SECONDARY_EXEC_ENABLE_INVPCID;
 }
 
+static inline bool cpu_has_vmx_vm_function(void)
+{//判断配置的vmcs是否支持vm functions
+	return vmcs_config.cpu_based_2nd_exec_ctrl &
+		SECONDARY_EXEC_VM_FUNCTION;
+}
+
 static inline bool cpu_has_virtual_nmis(void)
 {
 	return vmcs_config.pin_based_exec_ctrl & PIN_BASED_VIRTUAL_NMIS;
