@@ -197,7 +197,7 @@ enum vmcs_field {
 	HOST_IA32_PERF_GLOBAL_CTRL	= 0x00002c04,
 	HOST_IA32_PERF_GLOBAL_CTRL_HIGH	= 0x00002c05,
 	PIN_BASED_VM_EXEC_CONTROL       = 0x00004000,
-	CPU_BASED_VM_EXEC_CONTROL       = 0x00004002,
+	CPU_BASED_VM_EXEC_CONTROL       = 0x00004002, //第一个processor-based vm-execution controls
 	EXCEPTION_BITMAP                = 0x00004004,
 	PAGE_FAULT_ERROR_CODE_MASK      = 0x00004006,
 	PAGE_FAULT_ERROR_CODE_MATCH     = 0x00004008,
@@ -211,7 +211,7 @@ enum vmcs_field {
 	VM_ENTRY_EXCEPTION_ERROR_CODE   = 0x00004018,
 	VM_ENTRY_INSTRUCTION_LEN        = 0x0000401a,
 	TPR_THRESHOLD                   = 0x0000401c,
-	SECONDARY_VM_EXEC_CONTROL       = 0x0000401e,
+	SECONDARY_VM_EXEC_CONTROL       = 0x0000401e, //第二个processor-based vm-execution controls
 	PLE_GAP                         = 0x00004020,
 	PLE_WINDOW                      = 0x00004022,
 	VM_INSTRUCTION_ERROR            = 0x00004400,
@@ -406,15 +406,16 @@ enum vmcs_field {
 #define VMX_EPT_EXTENT_GLOBAL			2
 #define VMX_EPT_EXTENT_SHIFT			24
 
-#define VMX_EPT_EXECUTE_ONLY_BIT		(1ull)
-#define VMX_EPT_PAGE_WALK_4_BIT			(1ull << 6)
-#define VMX_EPTP_UC_BIT				(1ull << 8)
+//定义 IA32_VMX_EPT_VPID_CAP MSR  INDEX=48CH
+#define VMX_EPT_EXECUTE_ONLY_BIT		(1ull)      //允许配置 EPT 0：2为100，即只可执行
+#define VMX_EPT_PAGE_WALK_4_BIT			(1ull << 6) //允许配置pge-walk的长度为4
+#define VMX_EPTP_UC_BIT				(1ull << 8)     //uncache able
 #define VMX_EPTP_WB_BIT				(1ull << 14)
 #define VMX_EPT_2MB_PAGE_BIT			(1ull << 16)
 #define VMX_EPT_1GB_PAGE_BIT			(1ull << 17)
-#define VMX_EPT_INVEPT_BIT			(1ull << 20)
-#define VMX_EPT_AD_BIT				    (1ull << 21)
-#define VMX_EPT_EXTENT_CONTEXT_BIT		(1ull << 25)
+#define VMX_EPT_INVEPT_BIT			(1ull << 20)    // the INVEPT instruction is supported
+#define VMX_EPT_AD_BIT				    (1ull << 21)//accessed and dirty flags for EPT are supported
+#define VMX_EPT_EXTENT_CONTEXT_BIT		(1ull << 25)//the single-context INVEPT type is supported
 #define VMX_EPT_EXTENT_GLOBAL_BIT		(1ull << 26)
 
 #define VMX_VPID_EXTENT_SINGLE_CONTEXT_BIT      (1ull << 9) /* (41 - 32) */
@@ -447,6 +448,12 @@ enum vmcs_field {
 #define ASM_VMX_VMXON_RAX         ".byte 0xf3, 0x0f, 0xc7, 0x30"
 #define ASM_VMX_INVEPT		  ".byte 0x66, 0x0f, 0x38, 0x80, 0x08"
 #define ASM_VMX_INVVPID		  ".byte 0x66, 0x0f, 0x38, 0x81, 0x08"
+/*
+*在EPTP switch成功执行后，可能会对客户物理地址的翻译造成影响，可能会对改变CR3中的客户物理地址相对应的值。
+*ASM_VMX_VMFUNC vmfunc指令 操作码为：0F 01 D4 
+*ECX用于从EPTP list选择相应的EPTP，EAX用于选择VMFUNCTIONs中的函数，EPTP switch为0，EAX =0
+*/
+#define ASM_VMX_VMFUNC        ".byte 0x0f, 0x01, 0xd4" 
 
 struct vmx_msr_entry {
 	u32 index;
