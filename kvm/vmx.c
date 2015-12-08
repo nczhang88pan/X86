@@ -5990,11 +5990,10 @@ static __init int hardware_setup(void)
 		memset(vmx_msr_bitmap_nested, 0xff, PAGE_SIZE);
 
 	if (setup_vmcs_config(&vmcs_config) < 0) {
-		printk(KERN_DEBUG "我在hadware_setup中，刚配置完成vmcs_config %d",debugValue++);
 		r = -EIO;
 		goto out8;
 	}
-
+    printk(KERN_DEBUG "我在hadware_setup中，刚配置完成vmcs_config %d",debug Value++);
 	if (boot_cpu_has(X86_FEATURE_NX))
 		kvm_enable_efer_bits(EFER_NX);
 
