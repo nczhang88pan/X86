@@ -154,6 +154,8 @@ enum vmcs_field {
 	APIC_ACCESS_ADDR_HIGH		= 0x00002015,
 	POSTED_INTR_DESC_ADDR           = 0x00002016,
 	POSTED_INTR_DESC_ADDR_HIGH      = 0x00002017,
+	VM_FUNC                         = 0x00002018,//
+	VM_FUNC_HIGH                    = 0x00002019,//添加VM-FUNC Controls 域，B.2.1 Table B-4
 	EPT_POINTER                     = 0x0000201a,
 	EPT_POINTER_HIGH                = 0x0000201b,
 	EOI_EXIT_BITMAP0                = 0x0000201c,
@@ -164,6 +166,8 @@ enum vmcs_field {
 	EOI_EXIT_BITMAP2_HIGH           = 0x00002021,
 	EOI_EXIT_BITMAP3                = 0x00002022,
 	EOI_EXIT_BITMAP3_HIGH           = 0x00002023,
+	EPTP_LIST_ADDR                  = 0x00002024,
+	EPTP_LIST_ADDR_HIGH             = 0x00002025,//添加EPTP list addr 域
 	VMREAD_BITMAP                   = 0x00002026,
 	VMWRITE_BITMAP                  = 0x00002028,
 	XSS_EXIT_BITMAP                 = 0x0000202C,
