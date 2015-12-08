@@ -5921,7 +5921,7 @@ static void update_ple_window_actual_max(void)
 			__shrink_ple_window(max(ple_window_max, ple_window),
 			                    ple_window_grow, INT_MIN);
 }
-static int debugValue = 0 ;  //计数器，观察程序执行过程
+
 static __init int hardware_setup(void)
 {
 	int r = -ENOMEM, i, msr;
