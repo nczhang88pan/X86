@@ -5921,7 +5921,7 @@ static void update_ple_window_actual_max(void)
 			__shrink_ple_window(max(ple_window_max, ple_window),
 			                    ple_window_grow, INT_MIN);
 }
-
+int debugValue=0;
 static __init int hardware_setup(void)
 {
 	int r = -ENOMEM, i, msr;
@@ -5993,7 +5993,7 @@ static __init int hardware_setup(void)
 		r = -EIO;
 		goto out8;
 	}
-    printk(KERN_DEBUG "我在hadware_setup中，刚配置完成vmcs_config %d",debug Value++);
+    printk(KERN_DEBUG "我在hadware_setup中，刚配置完成vmcs_config %d",debugValue++);
 	if (boot_cpu_has(X86_FEATURE_NX))
 		kvm_enable_efer_bits(EFER_NX);
 
