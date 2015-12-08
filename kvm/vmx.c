@@ -2951,8 +2951,8 @@ static __init int adjust_vmx_controls(u32 ctl_min, u32 ctl_opt,
 
 	rdmsr(msr, vmx_msr_low, vmx_msr_high);
 
-	ctl &= vmx_msr_high; /* bit == 0 in high word ==> must be zero */
-	ctl |= vmx_msr_low;  /* bit == 1 in low word  ==> must be one  */
+	ctl &= vmx_msr_high; /* bit == 0 in high word ==> must be zero */ //msr的高32位的某一位为0的话，对应的ctl的那一位必须为0
+	ctl |= vmx_msr_low;  /* bit == 1 in low word  ==> must be one  */ //低32位中某一位为1的话，对应的ctl那一位必须为1
 
 	/* Ensure minimum (required) set of control bits are supported. */
 	if (ctl_min & ~ctl)
@@ -3021,12 +3021,16 @@ static __init int setup_vmcs_config(struct vmcs_config *vmcs_conf)
 			SECONDARY_EXEC_VIRTUAL_INTR_DELIVERY |
 			SECONDARY_EXEC_SHADOW_VMCS |
 			SECONDARY_EXEC_XSAVES |
-			SECONDARY_EXEC_ENABLE_PML;
-			//TODO 增加VMFUNC的许可
+			SECONDARY_EXEC_ENABLE_PML |
+			SECONDARY_EXEC_VM_FUNCTION;
+			//TODO 增加VMFUNC的许可，使得secondary based-cpu vm-func enabled
 		if (adjust_vmx_controls(min2, opt2,
 					MSR_IA32_VMX_PROCBASED_CTLS2,
 					&_cpu_based_2nd_exec_control) < 0)
 			return -EIO;
+		if (_cpu_based_2nd_exec_control & SECONDARY_EXEC_VM_FUNCTION ){
+			printk(KERN_DEBUG "vm func flag enabled");
+		}
 	}
 #ifndef CONFIG_X86_64
 	if (!(_cpu_based_2nd_exec_control &
@@ -3092,7 +3096,8 @@ static __init int setup_vmcs_config(struct vmcs_config *vmcs_conf)
 	/* Require Write-Back (WB) memory type for VMCS accesses. */
 	if (((vmx_msr_high >> 18) & 15) != 6)
 		return -EIO;
-
+    
+	//设置vmcs_config的各个值
 	vmcs_conf->size = vmx_msr_high & 0x1fff;
 	vmcs_conf->order = get_order(vmcs_config.size);
 	vmcs_conf->revision_id = vmx_msr_low;
@@ -3152,7 +3157,7 @@ static __init int setup_vmcs_config(struct vmcs_config *vmcs_conf)
 }
 
 static struct vmcs *alloc_vmcs_cpu(int cpu)
-{
+{//通过 cpu号申请一块vmcs的区域，并全填充0
 	int node = cpu_to_node(cpu);
 	struct page *pages;
 	struct vmcs *vmcs;
@@ -3234,7 +3239,7 @@ static void init_vmcs_shadow_fields(void)
 }
 
 static __init int alloc_kvm_area(void)
-{
+{//为kvm 中的每个cpu 创建一个vmcs，同时将CPU号加入到vmx中
 	int cpu;
 
 	for_each_possible_cpu(cpu) {
@@ -3424,7 +3429,7 @@ static void vmx_set_efer(struct kvm_vcpu *vcpu, u64 efer)
 #ifdef CONFIG_X86_64
 
 static void enter_lmode(struct kvm_vcpu *vcpu)
-{
+{//进入长模式
 	u32 guest_tr_ar;
 
 	vmx_segment_cache_clear(to_vmx(vcpu));
@@ -3591,9 +3596,9 @@ static u64 construct_eptp(unsigned long root_hpa)
 
 	/* TODO write the value reading from MSR */
 	eptp = VMX_EPT_DEFAULT_MT |
-		VMX_EPT_DEFAULT_GAW << VMX_EPT_GAW_EPTP_SHIFT;
+		VMX_EPT_DEFAULT_GAW << VMX_EPT_GAW_EPTP_SHIFT; //11110 : 0x1e
 	if (enable_ept_ad_bits)
-		eptp |= VMX_EPT_AD_ENABLE_BIT;
+		eptp |= VMX_EPT_AD_ENABLE_BIT;  //1011110
 	eptp |= (root_hpa & PAGE_MASK);
 
 	return eptp;
