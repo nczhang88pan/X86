@@ -7641,7 +7641,7 @@ static int vmx_enable_EPTP_switch(struct vcpu_vmx *vmx)
 
 	vmcs_write64(EPTP_LIST_ADDR, page_to_phys(vmx->eptp_list_pg));
 
-	exec_control = vmcs_write32(SECONDARY_VM_EXEC_CONTROL);
+	exec_control = vmcs_read32(SECONDARY_VM_EXEC_CONTROL);
 	exec_control |=SECONDARY_EXEC_VM_FUNCTION;
 	vmcs_write32(SECONDARY_VM_EXEC_CONTROL,exec_control);
 	printk(KERN_DEBUG "enable_EPTP_switch");
