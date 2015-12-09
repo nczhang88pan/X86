@@ -1912,7 +1912,6 @@ static void vmx_vcpu_load(struct kvm_vcpu *vcpu, int cpu)
 {
 	struct vcpu_vmx *vmx = to_vmx(vcpu);
 	u64 phys_addr = __pa(per_cpu(vmxarea, cpu));
-	printk(KERN_DEBUG "in vmx_vcpu_load %d",vmm_exclusive);
 	if (!vmm_exclusive)
 		kvm_cpu_vmxon(phys_addr);
 	else if (vmx->loaded_vmcs->cpu != cpu)
@@ -8605,6 +8604,7 @@ static void __init vmx_check_processor_compat(void *rtn)
 				smp_processor_id());
 		*(int *)rtn = -EIO;
 	}
+	printk(KERN_DEBUG "我在vmx_check_processor_compat中，刚调用完成vmcs_config %d",debugValue++);
 }
 
 static int get_ept_level(void)
