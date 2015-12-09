@@ -3450,12 +3450,14 @@ static void enter_lmode(struct kvm_vcpu *vcpu)
 			     | VMX_AR_TYPE_BUSY_64_TSS);
 	}
 	vmx_set_efer(vcpu, vcpu->arch.efer | EFER_LMA);
+	printk(KERN_DEBUG "enter longmode");
 }
 
 static void exit_lmode(struct kvm_vcpu *vcpu)
 {
 	vm_entry_controls_clearbit(to_vmx(vcpu), VM_ENTRY_IA32E_MODE);
 	vmx_set_efer(vcpu, vcpu->arch.efer & ~EFER_LMA);
+	printk(KERN_DEBUG "exit longmode");
 }
 
 #endif
@@ -3607,7 +3609,7 @@ static u64 construct_eptp(unsigned long root_hpa)
 	if (enable_ept_ad_bits)
 		eptp |= VMX_EPT_AD_ENABLE_BIT;  //1011110
 	eptp |= (root_hpa & PAGE_MASK);
-    printk(KERN_DEBUG "in construct_eptp：0x%lx 0x%lx",eptp,root_hpa);
+    //printk(KERN_DEBUG "in construct_eptp：0x%lx 0x%lx",eptp,root_hpa);
 	return eptp;
 }
 
@@ -7614,7 +7616,6 @@ static int vmx_enable_pml(struct vcpu_vmx *vmx)
 	exec_control = vmcs_read32(SECONDARY_VM_EXEC_CONTROL);
 	exec_control |= SECONDARY_EXEC_ENABLE_PML;
 	vmcs_write32(SECONDARY_VM_EXEC_CONTROL, exec_control);
-
 	return 0;
 }
 
@@ -7665,12 +7666,14 @@ static void vmx_eptp_list_pg_init(struct kvm_vcpu *vcpu ,u64 eptp)
 {
 	struct vcpu_vmx *vmx = to_vmx(vcpu);
 	u64 *eptp_list_buf;
-
+    u64  vm_func_msr;
 	eptp_list_buf = page_address(vmx->eptp_list_pg);
 	int i=0;
 	for(;i<EPTP_NUM;i++){
 		eptp_list_buf[i]= eptp ;
 	}
+	rdmsrl(MSR_IA32_VMX_VMFUNC,vm_func_msr);
+	printk(KERN_DEBUG "vmx_eptp_list_pg_init %lx",vm_func_msr);
 }
 
 static void vmx_flush_pml_buffer(struct kvm_vcpu *vcpu)
