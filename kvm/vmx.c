@@ -3604,7 +3604,7 @@ static u64 construct_eptp(unsigned long root_hpa)
 	if (enable_ept_ad_bits)
 		eptp |= VMX_EPT_AD_ENABLE_BIT;  //1011110
 	eptp |= (root_hpa & PAGE_MASK);
-    printk(KERN_DEBUG "in construct_eptp：0x%x 0x%lx"，eptp,root_hpa);
+    printk(KERN_DEBUG "in construct_eptp：0x%x 0x%x",eptp,root_hpa);
 	return eptp;
 }
 
@@ -4623,6 +4623,10 @@ static int vmx_vcpu_setup(struct vcpu_vmx *vmx)
 	if (cpu_has_secondary_exec_ctrls()) {
 		vmcs_write32(SECONDARY_VM_EXEC_CONTROL,
 				vmx_secondary_exec_control(vmx));//setup SECONDARY_VM_EXEC_CONTROL rethink
+	}
+
+	if(cpu_has_vmx_vm_function()){
+		printk(KERN_DEBUG "在vmx_vcpu_setup 准备配置vmfunc");
 	}
 
 	if (vmx_vm_has_apicv(vmx->vcpu.kvm)) {
