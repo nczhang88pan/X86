@@ -7672,8 +7672,25 @@ static void vmx_eptp_list_pg_init(struct kvm_vcpu *vcpu ,u64 eptp)
 	for(;i<EPTP_NUM;i++){
 		eptp_list_buf[i]= eptp ;
 	}
+}
+
+static void ept_list_config_test(struct vcpu_vmx * vmx){
+	u32 exec_control;
+	u64 vm_func_msr;
+	u64 *eptp_list_buf;
+	vmcs_read32(SECONDARY_VM_EXEC_CONTROL,exec_control);
+	if(!(exec_control & SECONDARY_EXEC_VM_FUNCTION)){
+		printk("secondary_based_VM flag 设置失败");
+	}
 	rdmsrl(MSR_IA32_VMX_VMFUNC,vm_func_msr);
 	printk(KERN_DEBUG "vmx_eptp_list_pg_init %lx",vm_func_msr);
+    ASSERT(vmx->eptp_list_pg);
+    vmcs_read64(EPTP_LIST_ADDR,*eptp_list_buf);//可能存在问题
+    int i=0;
+    for(;i<10;i++){
+    	printk(KERN_DEBUG "%d : %x",eptp_list_buf[i]);
+    }
+
 }
 
 static void vmx_flush_pml_buffer(struct kvm_vcpu *vcpu)
