@@ -3160,6 +3160,7 @@ static __init int setup_vmcs_config(struct vmcs_config *vmcs_conf)
 
 static struct vmcs *alloc_vmcs_cpu(int cpu)
 {//通过 cpu号申请一块vmcs的区域，并全填充0
+	printk(KERN_DEBUG "in alloc_vmcs_cpu,根据cpu号申请vmcs");
 	int node = cpu_to_node(cpu);
 	struct page *pages;
 	struct vmcs *vmcs;
@@ -3170,6 +3171,7 @@ static struct vmcs *alloc_vmcs_cpu(int cpu)
 	vmcs = page_address(pages);
 	memset(vmcs, 0, vmcs_config.size);
 	vmcs->revision_id = vmcs_config.revision_id; /* vmcs revision id */
+	printk(KERN_DEBUG "cpu节点为：%d vmcx id为 %d",node,vmcs->revision_id);
 	return vmcs;
 }
 
@@ -3474,7 +3476,7 @@ static void vmx_decache_cr0_guest_bits(struct kvm_vcpu *vcpu)
 }
 
 static void vmx_decache_cr3(struct kvm_vcpu *vcpu)
-{
+{//从vmcs中读取客户机的CR3并且放到vcpu->arch.cr3中
 	if (enable_ept && is_paging(vcpu))
 		vcpu->arch.cr3 = vmcs_readl(GUEST_CR3);
 	__set_bit(VCPU_EXREG_CR3, (ulong *)&vcpu->arch.regs_avail);
@@ -3602,7 +3604,7 @@ static u64 construct_eptp(unsigned long root_hpa)
 	if (enable_ept_ad_bits)
 		eptp |= VMX_EPT_AD_ENABLE_BIT;  //1011110
 	eptp |= (root_hpa & PAGE_MASK);
-
+    printk(KERN_DEBUG "in construct_eptp：0x%lx 0x%lx"，eptp,root_hpa);
 	return eptp;
 }
 
