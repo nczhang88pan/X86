@@ -198,6 +198,8 @@ struct shared_msr_entry {
  * This structure is packed to ensure that its layout is identical across
  * machines (necessary for live migration).
  * If there are changes in this struct, VMCS12_REVISION must be changed.
+ * 参考文献：http://www.ibm.com/developerworks/cloud/library/cl-nestedvirtualization/
+ * nested guest大意就是虚拟机中再装个虚拟机
  */
 typedef u64 natural_width;
 struct __packed vmcs12 {
@@ -491,7 +493,7 @@ struct vcpu_vmx {
 	 * guest (L2), it points to a different VMCS.
 	 */
 	struct loaded_vmcs    vmcs01;
-	struct loaded_vmcs   *loaded_vmcs;
+	struct loaded_vmcs   *loaded_vmcs; //这个cpu中当前使用的vmcs
 	bool                  __launched; /* temporary, used in vmx_vcpu_run */
 	struct msr_autoload {
 		unsigned nr;
