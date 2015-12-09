@@ -1089,6 +1089,7 @@ static inline bool cpu_has_vmx_invpcid(void)
 
 static inline bool cpu_has_vmx_vm_function(void)
 {//判断配置的vmcs是否支持vm functions
+	//TODO read from the msr to checke whether it was
 	return vmcs_config.cpu_based_2nd_exec_ctrl &
 		SECONDARY_EXEC_VM_FUNCTION;
 }
@@ -1385,7 +1386,7 @@ static inline void ept_sync_context(u64 eptp)
 }
 
 static __always_inline unsigned long vmcs_readl(unsigned long field)
-{
+{//从vmcs域中读取对应field的数据
 	unsigned long value;
 
 	asm volatile (__ex_clear(ASM_VMX_VMREAD_RDX_RAX, "%0")
@@ -1911,7 +1912,7 @@ static void vmx_vcpu_load(struct kvm_vcpu *vcpu, int cpu)
 {
 	struct vcpu_vmx *vmx = to_vmx(vcpu);
 	u64 phys_addr = __pa(per_cpu(vmxarea, cpu));
-
+	printk(KERN_DEBUG "in vmx_vcpu_load %d",vmm_exclusive);
 	if (!vmm_exclusive)
 		kvm_cpu_vmxon(phys_addr);
 	else if (vmx->loaded_vmcs->cpu != cpu)
@@ -2769,7 +2770,7 @@ static int vmx_set_msr(struct kvm_vcpu *vcpu, struct msr_data *msr_info)
 			vmx_leave_nested(vcpu);
 		break;
 	case MSR_IA32_VMX_BASIC ... MSR_IA32_VMX_VMFUNC:
-		return 1; /* they are read-only */
+		return 1; /* they are read-only */ //对应的设置MSR_IA32_VMX_VMX_VMFUNC的地方
 	case MSR_IA32_XSS:
 		if (!vmx_xsaves_supported())
 			return 1;
