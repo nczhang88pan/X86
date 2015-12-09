@@ -3604,7 +3604,7 @@ static u64 construct_eptp(unsigned long root_hpa)
 	if (enable_ept_ad_bits)
 		eptp |= VMX_EPT_AD_ENABLE_BIT;  //1011110
 	eptp |= (root_hpa & PAGE_MASK);
-    printk(KERN_DEBUG "in construct_eptp：0x%lx 0x%lx"，eptp,root_hpa);
+    printk(KERN_DEBUG "in construct_eptp：0x%x 0x%lx"，eptp,root_hpa);
 	return eptp;
 }
 
