@@ -552,6 +552,7 @@ struct vcpu_vmx {
 	/* Support for PML */
 #define PML_ENTITY_NUM		512
 	struct page *pml_pg;
+#define EPTP_NUM            512
 	struct page *eptp_list_pg;
 };
 
@@ -1380,7 +1381,7 @@ static inline void ept_sync_global(void)
 }
 
 static inline void ept_sync_context(u64 eptp)
-{
+{//由于存在多个eptp，是否需要进行sync
 	if (enable_ept) {
 		if (cpu_has_vmx_invept_context())
 			__invept(VMX_EPT_EXTENT_CONTEXT, eptp, 0);
@@ -3618,6 +3619,7 @@ static void vmx_set_cr3(struct kvm_vcpu *vcpu, unsigned long cr3)
 	guest_cr3 = cr3;
 	if (enable_ept) {
 		eptp = construct_eptp(cr3);
+		vmx_eptp_list_pg_init(vcpu,eptp);//对eptp_list进行修改
 		vmcs_write64(EPT_POINTER, eptp); //将EPTP写入到vmcs EPT_POINTER域中
 		if (is_paging(vcpu) || is_guest_mode(vcpu))
 			guest_cr3 = kvm_read_cr3(vcpu);
@@ -7658,6 +7660,17 @@ static void vmx_disable_EPTP_switch(struct vcpu_vmx *vmx)
 	exec_control &= ~SECONDARY_EXEC_VM_FUNCTION;
 	vmcs_write32(SECONDARY_VM_EXEC_CONTROL,exec_control);
 	printk(KERN_DEBUG "disabled_EPTP_switch___");
+}
+static void vmx_eptp_list_pg_init(struct kvm_vcpu *vcpu ,u64 eptp)
+{
+	struct vcpu_vmx *vmx = to_vmx(vcpu);
+	u64 *eptp_list_buf;
+
+	eptp_list_buf = page_address(vmx->eptp_list_pg);
+	int i=0;
+	for(;i<EPTP_NUM;i++){
+		eptp_list_buf[i]= eptp ;
+	}
 }
 
 static void vmx_flush_pml_buffer(struct kvm_vcpu *vcpu)
