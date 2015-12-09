@@ -105,6 +105,9 @@ static u64 __read_mostly host_xss;
 static bool __read_mostly enable_pml = 1;
 module_param_named(pml, enable_pml, bool, S_IRUGO);
 
+static bool __read_mostly enable_EPTP_switch = 1;
+module_param_named(EPTP_switch, enable_EPTP_switch, bool, S_IRUGO);
+
 #define KVM_GUEST_CR0_MASK (X86_CR0_NW | X86_CR0_CD)
 #define KVM_VM_CR0_ALWAYS_ON_UNRESTRICTED_GUEST (X86_CR0_WP | X86_CR0_NE)
 #define KVM_VM_CR0_ALWAYS_ON						\
@@ -549,6 +552,7 @@ struct vcpu_vmx {
 	/* Support for PML */
 #define PML_ENTITY_NUM		512
 	struct page *pml_pg;
+	struct page *eptp_list_pg;
 };
 
 enum segment_cache_field {
@@ -4557,6 +4561,7 @@ static u32 vmx_secondary_exec_control(struct vcpu_vmx *vmx)
 		enable_unrestricted_guest = 0;
 		/* Enable INVPCID for non-ept guests may cause performance regression. */
 		exec_control &= ~SECONDARY_EXEC_ENABLE_INVPCID;
+		exec_control &= ~SECONDARY_EXEC_VM_FUNCTION;//如果不支持ept，将vm_func标识位关闭
 	}
 	if (!enable_unrestricted_guest)
 		exec_control &= ~SECONDARY_EXEC_UNRESTRICTED_GUEST;
@@ -4625,6 +4630,7 @@ static int vmx_vcpu_setup(struct vcpu_vmx *vmx)
 
 	if(cpu_has_vmx_vm_function()){
 		printk(KERN_DEBUG "在vmx_vcpu_setup 准备配置vmfunc");
+		
 	}
 
 	if (vmx_vm_has_apicv(vmx->vcpu.kvm)) {
@@ -6095,8 +6101,10 @@ static __init int hardware_setup(void)
 			0ull, VMX_EPT_EXECUTABLE_MASK);
 		ept_set_mmio_spte_mask();
 		kvm_enable_tdp();
-	} else
+	} else{
 		kvm_disable_tdp();
+		enable_EPTP_switch = 0;
+	}
 
 	update_ple_window_actual_max();
 
@@ -7621,6 +7629,37 @@ static void vmx_disable_pml(struct vcpu_vmx *vmx)
 	vmcs_write32(SECONDARY_VM_EXEC_CONTROL, exec_control);
 }
 
+static int vmx_enable_EPTP_switch(struct vcpu_vmx *vmx)
+{//添加eptp_switch
+	struct page *eptp_list_pg;
+	u32 exec_control;
+
+	eptp_list_pg=alloc_page(GFP_KERNEL | __GFP_ZERO);
+	if(!eptp_list_pg)
+		return -ENOMEM;
+	vmx->eptp_list_pg=eptp_list_pg;
+
+	vmcs_write64(EPTP_LIST_ADDR, page_to_phys(vmx->eptp_list_pg));
+
+	exec_control = vmcs_write32(SECONDARY_VM_EXEC_CONTROL);
+	exec_control |=SECONDARY_EXEC_VM_FUNCTION;
+	vmcs_write32(SECONDARY_VM_EXEC_CONTROL,exec_control);
+	printk(KERN_DEBUG "enable_EPTP_switch");
+	return 0;
+}
+
+static void vmx_disable_EPTP_switch(struct vcpu_vmx *vmx)
+{//销毁eptp-list 页
+	u32 exec_control;
+	ASSERT(vmx->eptp_list_pg);
+	__free_page(vmx->eptp_list_pg);
+	vmx->eptp_list_pg = NULL;
+	exec_control = vmcs_read32(SECONDARY_VM_EXEC_CONTROL);
+	exec_control &= ~SECONDARY_EXEC_VM_FUNCTION;
+	vmcs_write32(SECONDARY_VM_EXEC_CONTROL,exec_control);
+	printk(KERN_DEBUG "disabled_EPTP_switch___");
+}
+
 static void vmx_flush_pml_buffer(struct kvm_vcpu *vcpu)
 {
 	struct vcpu_vmx *vmx = to_vmx(vcpu);
@@ -8496,6 +8535,8 @@ static void vmx_free_vcpu(struct kvm_vcpu *vcpu)
 
 	if (enable_pml)
 		vmx_disable_pml(vmx);
+	if (enable_EPTP_switch)
+		vmx_disable_EPTP_switch(vmx);
 	free_vpid(vmx);
 	leave_guest_mode(vcpu);
 	vmx_load_vmcs01(vcpu);
@@ -8579,6 +8620,11 @@ static struct kvm_vcpu *vmx_create_vcpu(struct kvm *kvm, unsigned int id)
 	if (enable_pml) {
 		err = vmx_enable_pml(vmx);
 		if (err)
+			goto free_vmcs;
+	}
+	if(enable_EPTP_switch){
+		err = vmx_enable_EPTP_switch(vmx);
+		if(err)
 			goto free_vmcs;
 	}
 
