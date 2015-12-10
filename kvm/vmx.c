@@ -7684,7 +7684,7 @@ static void ept_list_config_test(struct vcpu_vmx * vmx){
 	rdmsrl(MSR_IA32_VMX_VMFUNC,vm_func_msr);
 	printk(KERN_DEBUG "vm_func_msr 0x%08x",vm_func_msr);
     ASSERT(vmx->eptp_list_pg);
-    eptp_list_buf=page_address(vmx->pml_pg);//可能存在问题
+    eptp_list_buf=page_address(vmx->eptp_list_pg);//可能存在问题
     u16 i=0;
     printk("开始打印值");
     for(;i<10;i++){
