@@ -3623,6 +3623,7 @@ static void vmx_set_cr3(struct kvm_vcpu *vcpu, unsigned long cr3)
 	if (enable_ept) {
 		eptp = construct_eptp(cr3);
 		vmx_eptp_list_pg_init(vcpu,eptp);//对eptp_list进行修改
+		ept_list_config_test(vmx);
 		vmcs_write64(EPT_POINTER, eptp); //将EPTP写入到vmcs EPT_POINTER域中
 		if (is_paging(vcpu) || is_guest_mode(vcpu))
 			guest_cr3 = kvm_read_cr3(vcpu);
@@ -4704,7 +4705,6 @@ static int vmx_vcpu_setup(struct vcpu_vmx *vmx)
 
 	if (vmx_xsaves_supported())
 		vmcs_write64(XSS_EXIT_BITMAP, VMX_XSS_EXIT_BITMAP);
-    ept_list_config_test(vmx);
 	return 0;
 }
 
@@ -8664,7 +8664,6 @@ static struct kvm_vcpu *vmx_create_vcpu(struct kvm *kvm, unsigned int id)
 			goto free_vmcs;
 	}
      
-    ept_list_config_test(vmx);
 	return &vmx->vcpu;
 
 free_vmcs:
