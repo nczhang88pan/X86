@@ -3623,7 +3623,7 @@ static void vmx_set_cr3(struct kvm_vcpu *vcpu, unsigned long cr3)
 	if (enable_ept) {
 		eptp = construct_eptp(cr3);
 		vmx_eptp_list_pg_init(vcpu,eptp);//对eptp_list进行修改
-		ept_list_config_test(vmx);
+		ept_list_config_test(to_vmx(vcpu));
 		vmcs_write64(EPT_POINTER, eptp); //将EPTP写入到vmcs EPT_POINTER域中
 		if (is_paging(vcpu) || is_guest_mode(vcpu))
 			guest_cr3 = kvm_read_cr3(vcpu);
