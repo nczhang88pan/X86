@@ -4634,7 +4634,7 @@ static int vmx_vcpu_setup(struct vcpu_vmx *vmx)
 
 	if(cpu_has_vmx_vm_function()){
 		printk(KERN_DEBUG "在vmx_vcpu_setup 准备配置vmfunc");
-		
+	    vmcs_write64(EPTP_LIST_ADDR, page_to_phys(vmx->eptp_list_pg));	
 	}
 
 	if (vmx_vm_has_apicv(vmx->vcpu.kvm)) {
@@ -4707,7 +4707,7 @@ static int vmx_vcpu_setup(struct vcpu_vmx *vmx)
 
 	if (vmx_xsaves_supported())
 		vmcs_write64(XSS_EXIT_BITMAP, VMX_XSS_EXIT_BITMAP);
-
+    ept_list_config_test(vmx);
 	return 0;
 }
 
@@ -7678,7 +7678,7 @@ static void ept_list_config_test(struct vcpu_vmx * vmx){
 	u32 exec_control;
 	u64 vm_func_msr;
 	u64 *eptp_list_buf;
-	vmcs_read32(SECONDARY_VM_EXEC_CONTROL,exec_control);
+	exec_control=vmcs_read32(SECONDARY_VM_EXEC_CONTROL);
 	if(!(exec_control & SECONDARY_EXEC_VM_FUNCTION)){
 		printk("secondary_based_VM flag 设置失败");
 	}
@@ -7686,6 +7686,7 @@ static void ept_list_config_test(struct vcpu_vmx * vmx){
 	printk(KERN_DEBUG "vmx_eptp_list_pg_init %lx",vm_func_msr);
     ASSERT(vmx->eptp_list_pg);
     vmcs_read64(EPTP_LIST_ADDR,*eptp_list_buf);//可能存在问题
+    *eptp_list_buf=vmcs_read64(EPTP_LIST_ADDR);//可能存在问题
     int i=0;
     for(;i<10;i++){
     	printk(KERN_DEBUG "%d : %x",eptp_list_buf[i]);
