@@ -1085,6 +1085,12 @@ static inline bool cpu_has_vmx_invpcid(void)
 		SECONDARY_EXEC_ENABLE_INVPCID;
 }
 
+static inline bool cpu_has_vmx_vm_function(void)
+{//判断配置的vmcs是否支持vm functions
+	return vmcs_config.cpu_based_2nd_exec_ctrl &
+		SECONDARY_EXEC_VM_FUNCTION;
+}
+
 static inline bool cpu_has_virtual_nmis(void)
 {
 	return vmcs_config.pin_based_exec_ctrl & PIN_BASED_VIRTUAL_NMIS;
@@ -1210,7 +1216,7 @@ static inline void __invvpid(int ext, u16 vpid, gva_t gva)
 }
 
 static inline void __invept(int ext, u64 eptp, gpa_t gpa)
-{
+{//ext 用于选择类型，vmx_ept_extent_global=2 将所有ETP相关的映射都无效化,vmx_ept_extent_context=1 与当前EPT&VPID相关的映射无效化
 	struct {
 		u64 eptp, gpa;
 	} operand = {eptp, gpa};
@@ -1245,14 +1251,14 @@ static void vmcs_clear(struct vmcs *vmcs)
 }
 
 static inline void loaded_vmcs_init(struct loaded_vmcs *loaded_vmcs)
-{
+{//vmc初始化
 	vmcs_clear(loaded_vmcs->vmcs);
 	loaded_vmcs->cpu = -1;
 	loaded_vmcs->launched = 0;
 }
 
 static void vmcs_load(struct vmcs *vmcs)
-{
+{//vmc加载
 	u64 phys_addr = __pa(vmcs);
 	u8 error;
 
@@ -1412,7 +1418,7 @@ static noinline void vmwrite_error(unsigned long field, unsigned long value)
 }
 
 static void vmcs_writel(unsigned long field, unsigned long value)
-{
+{//向vmcs 特定的field写入 value值
 	u8 error;
 
 	asm volatile (__ex(ASM_VMX_VMWRITE_RAX_RDX) "; setna %0"
@@ -1451,7 +1457,7 @@ static void vmcs_set_bits(unsigned long field, u32 mask)
 }
 
 static inline void vm_entry_controls_init(struct vcpu_vmx *vmx, u32 val)
-{
+{// vm_entry_controls 的参考在 24.8.1
 	vmcs_write32(VM_ENTRY_CONTROLS, val);
 	vmx->vm_entry_controls_shadow = val;
 }
@@ -1479,7 +1485,7 @@ static inline void vm_entry_controls_clearbit(struct vcpu_vmx *vmx, u32 val)
 }
 
 static inline void vm_exit_controls_init(struct vcpu_vmx *vmx, u32 val)
-{
+{// 24.7
 	vmcs_write32(VM_EXIT_CONTROLS, val);
 	vmx->vm_exit_controls_shadow = val;
 }
@@ -1847,7 +1853,7 @@ static void vmx_save_host_state(struct kvm_vcpu *vcpu)
 }
 
 static void __vmx_load_host_state(struct vcpu_vmx *vmx)
-{
+{//vmc和vmx的状态的转换过程31.3，可以同时VMPTRLD 多个vmx
 	if (!vmx->host_state.loaded)
 		return;
 
@@ -2191,7 +2197,7 @@ static void vmx_set_msr_bitmap(struct kvm_vcpu *vcpu)
  * mode, as fiddling with msrs is very expensive.
  */
 static void setup_msrs(struct vcpu_vmx *vmx)
-{
+{//MSR TODO
 	int save_nmsrs, index;
 
 	save_nmsrs = 0;
@@ -2348,7 +2354,7 @@ static inline bool nested_vmx_allowed(struct kvm_vcpu *vcpu)
  * may be on. See also vmx_control_verify().
  */
 static void nested_vmx_setup_ctls_msrs(struct vcpu_vmx *vmx)
-{
+{//setup ctls msr
 	/*
 	 * Note that as a general rule, the high half of the MSRs (bits in
 	 * the control fields which may be 1) should be initialized by the
@@ -2623,7 +2629,7 @@ static int vmx_get_vmx_msr(struct kvm_vcpu *vcpu, u32 msr_index, u64 *pdata)
  * Assumes vcpu_load() was already called.
  */
 static int vmx_get_msr(struct kvm_vcpu *vcpu, struct msr_data *msr_info)
-{
+{//TODO
 	struct shared_msr_entry *msr;
 
 	switch (msr_info->index) {
@@ -2696,7 +2702,7 @@ static void vmx_leave_nested(struct kvm_vcpu *vcpu);
  * Assumes vcpu_load() was already called.
  */
 static int vmx_set_msr(struct kvm_vcpu *vcpu, struct msr_data *msr_info)
-{
+{//设置vmx 的 msr值 TODO
 	struct vcpu_vmx *vmx = to_vmx(vcpu);
 	struct shared_msr_entry *msr;
 	int ret = 0;
@@ -2827,7 +2833,7 @@ static void vmx_cache_reg(struct kvm_vcpu *vcpu, enum kvm_reg reg)
 
 static __init int cpu_has_kvm_support(void)
 {
-	return cpu_has_vmx();
+	return cpu_has_vmx(); //CPUID.1:ECX.VMX[bit 5]->VT   :  ecx =cpuid_ecx(1) test_bit(5,&ecx)
 }
 
 static __init int vmx_disabled_by_bios(void)
@@ -2945,8 +2951,8 @@ static __init int adjust_vmx_controls(u32 ctl_min, u32 ctl_opt,
 
 	rdmsr(msr, vmx_msr_low, vmx_msr_high);
 
-	ctl &= vmx_msr_high; /* bit == 0 in high word ==> must be zero */
-	ctl |= vmx_msr_low;  /* bit == 1 in low word  ==> must be one  */
+	ctl &= vmx_msr_high; /* bit == 0 in high word ==> must be zero */ //msr的高32位的某一位为0的话，对应的ctl的那一位必须为0
+	ctl |= vmx_msr_low;  /* bit == 1 in low word  ==> must be one  */ //低32位中某一位为1的话，对应的ctl那一位必须为1
 
 	/* Ensure minimum (required) set of control bits are supported. */
 	if (ctl_min & ~ctl)
@@ -2965,7 +2971,7 @@ static __init bool allow_1_setting(u32 msr, u32 ctl)
 }
 
 static __init int setup_vmcs_config(struct vmcs_config *vmcs_conf)
-{
+{//初始化 _cpu_based_2nd_exec_control _cpu_based_exec_control 的config   TODO
 	u32 vmx_msr_low, vmx_msr_high;
 	u32 min, opt, min2, opt2;
 	u32 _pin_based_exec_control = 0;
@@ -3015,11 +3021,16 @@ static __init int setup_vmcs_config(struct vmcs_config *vmcs_conf)
 			SECONDARY_EXEC_VIRTUAL_INTR_DELIVERY |
 			SECONDARY_EXEC_SHADOW_VMCS |
 			SECONDARY_EXEC_XSAVES |
-			SECONDARY_EXEC_ENABLE_PML;
+			SECONDARY_EXEC_ENABLE_PML |
+			SECONDARY_EXEC_VM_FUNCTION;
+			//TODO 增加VMFUNC的许可，使得secondary based-cpu vm-func enabled
 		if (adjust_vmx_controls(min2, opt2,
 					MSR_IA32_VMX_PROCBASED_CTLS2,
 					&_cpu_based_2nd_exec_control) < 0)
 			return -EIO;
+		if (_cpu_based_2nd_exec_control & SECONDARY_EXEC_VM_FUNCTION ){
+			printk(KERN_DEBUG "vm func flag enabled");
+		}
 	}
 #ifndef CONFIG_X86_64
 	if (!(_cpu_based_2nd_exec_control &
@@ -3085,7 +3096,8 @@ static __init int setup_vmcs_config(struct vmcs_config *vmcs_conf)
 	/* Require Write-Back (WB) memory type for VMCS accesses. */
 	if (((vmx_msr_high >> 18) & 15) != 6)
 		return -EIO;
-
+    
+	//设置vmcs_config的各个值
 	vmcs_conf->size = vmx_msr_high & 0x1fff;
 	vmcs_conf->order = get_order(vmcs_config.size);
 	vmcs_conf->revision_id = vmx_msr_low;
@@ -3145,7 +3157,7 @@ static __init int setup_vmcs_config(struct vmcs_config *vmcs_conf)
 }
 
 static struct vmcs *alloc_vmcs_cpu(int cpu)
-{
+{//通过 cpu号申请一块vmcs的区域，并全填充0
 	int node = cpu_to_node(cpu);
 	struct page *pages;
 	struct vmcs *vmcs;
@@ -3227,7 +3239,7 @@ static void init_vmcs_shadow_fields(void)
 }
 
 static __init int alloc_kvm_area(void)
-{
+{//为kvm 中的每个cpu 创建一个vmcs，同时将CPU号加入到vmx中
 	int cpu;
 
 	for_each_possible_cpu(cpu) {
@@ -3417,7 +3429,7 @@ static void vmx_set_efer(struct kvm_vcpu *vcpu, u64 efer)
 #ifdef CONFIG_X86_64
 
 static void enter_lmode(struct kvm_vcpu *vcpu)
-{
+{//进入长模式
 	u32 guest_tr_ar;
 
 	vmx_segment_cache_clear(to_vmx(vcpu));
@@ -3442,7 +3454,7 @@ static void exit_lmode(struct kvm_vcpu *vcpu)
 #endif
 
 static void vmx_flush_tlb(struct kvm_vcpu *vcpu)
-{
+{//对当前的EPTP tlb 进行flush TODO rethink
 	vpid_sync_context(to_vmx(vcpu));
 	if (enable_ept) {
 		if (!VALID_PAGE(vcpu->arch.mmu.root_hpa))
@@ -3579,14 +3591,14 @@ static void vmx_set_cr0(struct kvm_vcpu *vcpu, unsigned long cr0)
 }
 
 static u64 construct_eptp(unsigned long root_hpa)
-{
+{//构建 EPTP  TODO
 	u64 eptp;
 
 	/* TODO write the value reading from MSR */
 	eptp = VMX_EPT_DEFAULT_MT |
-		VMX_EPT_DEFAULT_GAW << VMX_EPT_GAW_EPTP_SHIFT;
+		VMX_EPT_DEFAULT_GAW << VMX_EPT_GAW_EPTP_SHIFT; //11110 : 0x1e
 	if (enable_ept_ad_bits)
-		eptp |= VMX_EPT_AD_ENABLE_BIT;
+		eptp |= VMX_EPT_AD_ENABLE_BIT;  //1011110
 	eptp |= (root_hpa & PAGE_MASK);
 
 	return eptp;
@@ -3600,7 +3612,7 @@ static void vmx_set_cr3(struct kvm_vcpu *vcpu, unsigned long cr3)
 	guest_cr3 = cr3;
 	if (enable_ept) {
 		eptp = construct_eptp(cr3);
-		vmcs_write64(EPT_POINTER, eptp);
+		vmcs_write64(EPT_POINTER, eptp); //将EPTP写入到vmcs EPT_POINTER域中
 		if (is_paging(vcpu) || is_guest_mode(vcpu))
 			guest_cr3 = kvm_read_cr3(vcpu);
 		else
@@ -4580,7 +4592,7 @@ static void ept_set_mmio_spte_mask(void)
  * Sets up the vmcs for emulated real mode.
  */
 static int vmx_vcpu_setup(struct vcpu_vmx *vmx)
-{
+{//对vcpu进行设置，同时写入部分 msr 配置 TODO
 #ifdef CONFIG_X86_64
 	unsigned long a;
 #endif
@@ -4602,11 +4614,11 @@ static int vmx_vcpu_setup(struct vcpu_vmx *vmx)
 	/* Control */
 	vmcs_write32(PIN_BASED_VM_EXEC_CONTROL, vmx_pin_based_exec_ctrl(vmx));
 
-	vmcs_write32(CPU_BASED_VM_EXEC_CONTROL, vmx_exec_control(vmx));
+	vmcs_write32(CPU_BASED_VM_EXEC_CONTROL, vmx_exec_control(vmx));//setup CPU_BASED_VM_EXEC_CONTROL rethink
 
 	if (cpu_has_secondary_exec_ctrls()) {
 		vmcs_write32(SECONDARY_VM_EXEC_CONTROL,
-				vmx_secondary_exec_control(vmx));
+				vmx_secondary_exec_control(vmx));//setup SECONDARY_VM_EXEC_CONTROL rethink
 	}
 
 	if (vmx_vm_has_apicv(vmx->vcpu.kvm)) {
@@ -4684,7 +4696,7 @@ static int vmx_vcpu_setup(struct vcpu_vmx *vmx)
 }
 
 static void vmx_vcpu_reset(struct kvm_vcpu *vcpu, bool init_event)
-{
+{//vcpu reset TODO
 	struct vcpu_vmx *vmx = to_vmx(vcpu);
 	struct msr_data apic_base_msr;
 	u64 cr0;
@@ -7669,7 +7681,7 @@ static void vmx_dump_dtsel(char *name, uint32_t limit)
 }
 
 static void dump_vmcs(void)
-{
+{//TODO
 	u32 vmentry_ctl = vmcs_read32(VM_ENTRY_CONTROLS);
 	u32 vmexit_ctl = vmcs_read32(VM_EXIT_CONTROLS);
 	u32 cpu_based_exec_ctrl = vmcs_read32(CPU_BASED_VM_EXEC_CONTROL);
