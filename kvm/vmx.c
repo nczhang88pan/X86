@@ -3624,7 +3624,6 @@ static void vmx_set_cr3(struct kvm_vcpu *vcpu, unsigned long cr3)
 		eptp = construct_eptp(cr3);
 		printk(KERN_DEBUG "in vmx_set_cr3 eptp的值为0x%016lx",eptp);
 		vmx_eptp_list_pg_init(vcpu,eptp);//对eptp_list进行修改
-		ept_list_config_test(to_vmx(vcpu));
 		vmcs_write64(EPT_POINTER, eptp); //将EPTP写入到vmcs EPT_POINTER域中
 		if (is_paging(vcpu) || is_guest_mode(vcpu))
 			guest_cr3 = kvm_read_cr3(vcpu);
@@ -7677,7 +7676,9 @@ static void ept_list_config_test(struct vcpu_vmx * vmx){
 	u32 exec_control;
 	u64 vm_func_msr;
 	u64 *eptp_list_buf;
+	u64 eptp_list_addr;
 	exec_control=vmcs_read32(SECONDARY_VM_EXEC_CONTROL);
+	eptp_list_addr=vmcs_read64(EPTP_LIST_ADDR);
 	if(!(exec_control & SECONDARY_EXEC_VM_FUNCTION)){
 		printk("secondary_based_VM flag 设置失败");
 	}
@@ -7686,7 +7687,7 @@ static void ept_list_config_test(struct vcpu_vmx * vmx){
     ASSERT(vmx->eptp_list_pg);
     eptp_list_buf=page_address(vmx->eptp_list_pg);//可能存在问题
     u16 i=0;
-    printk("开始打印值");
+    printk("开始打印值 eptp_list_addr msr 0x%016lx",eptp_list_addr);
     for(;i<10;i++){
     	printk(KERN_DEBUG "0x%016lx\n",eptp_list_buf[i]);
     }
@@ -8357,6 +8358,9 @@ static void __noclone vmx_vcpu_run(struct kvm_vcpu *vcpu)
 {
 	struct vcpu_vmx *vmx = to_vmx(vcpu);
 	unsigned long debugctlmsr, cr4;
+
+	printk(KERN_DEBUG "in vmx_vcpu_run");
+	ept_list_config_test(vmx);
 
 	/* Record the guest's net vcpu time for enforced NMI injections. */
 	if (unlikely(!cpu_has_virtual_nmis() && vmx->soft_vnmi_blocked))
