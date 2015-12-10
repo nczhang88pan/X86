@@ -3627,7 +3627,7 @@ static void vmx_set_cr3(struct kvm_vcpu *vcpu, unsigned long cr3)
 	if (enable_ept) {
 		eptp = construct_eptp(cr3);
 		if (to_vmx(vcpu)->eptp_list_pg) {
-			u64 *eptp_list = phys_to_virt(page_to_phys(to_vmx(vcpu)->eptp_list_pg));
+			u64 *eptp_list = phys_to_virt(page_to_phys(to_vmx(vcpu)->eptp_list_pg));//在kvm进行写的时候由于是虚地址，需要进行转换
 			int i;
 
 			for (i = 0; i < EPTP_LIST_NUM; ++i)
