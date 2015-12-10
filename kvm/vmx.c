@@ -7665,7 +7665,7 @@ static void vmx_eptp_list_pg_init(struct kvm_vcpu *vcpu ,u64 eptp)
 	struct vcpu_vmx *vmx = to_vmx(vcpu);
 	u64 *eptp_list_buf;
 	eptp_list_buf = page_address(vmx->eptp_list_pg);
-	u32 i=0;
+	u16 i=0;
 	for(;i<EPTP_NUM;i++){
 		eptp_list_buf[i]= eptp ;
 	}
@@ -7681,8 +7681,8 @@ static void ept_list_config_test(struct vcpu_vmx * vmx){
 	}
 	rdmsrl(MSR_IA32_VMX_VMFUNC,vm_func_msr);
     ASSERT(vmx->eptp_list_pg);
-    eptp_list_buf=vmcs_read64(EPTP_LIST_ADDR);//可能存在问题
-    u32 i=0;
+    eptp_list_buf=page_address(vmx->pml_pg);//可能存在问题
+    u16 i=0;
     for(;i<10;i++){
     	printk(KERN_DEBUG "0x%08x",eptp_list_buf[i]);
     }
@@ -7889,8 +7889,8 @@ static void dump_vmcs(void)
 		pr_err("Virtual processor ID = 0x%04x\n",
 		       vmcs_read16(VIRTUAL_PROCESSOR_ID));
 	if (secondary_exec_control & SECONDARY_EXEC_VM_FUNCTION){
-		pr_err("EPTP list address = %016lx\n",vmcs_read64(EPTP_LIST_ADDR));
-		pr_err("VM_func =%016lx\n",vmcs_read64(VM_FUNC));
+		pr_err("EPTP list address = %016lx\n",vmcs_readl(EPTP_LIST_ADDR));
+		pr_err("VM_func =%016lx\n",vmcs_readl(VM_FUNC));
 	}
 
 }
