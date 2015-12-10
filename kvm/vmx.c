@@ -4633,10 +4633,6 @@ static int vmx_vcpu_setup(struct vcpu_vmx *vmx)
 				vmx_secondary_exec_control(vmx));//setup SECONDARY_VM_EXEC_CONTROL rethink
 	}
 
-	if(cpu_has_vmx_vm_function()){
-		printk(KERN_DEBUG "在vmx_vcpu_setup 准备配置vmfunc");
-	    vmcs_write64(EPTP_LIST_ADDR, page_to_phys(vmx->eptp_list_pg));	
-	}
 
 	if (vmx_vm_has_apicv(vmx->vcpu.kvm)) {
 		vmcs_write64(EOI_EXIT_BITMAP0, 0);
@@ -8656,12 +8652,13 @@ static struct kvm_vcpu *vmx_create_vcpu(struct kvm *kvm, unsigned int id)
 		if (err)
 			goto free_vmcs;
 	}
-	if(enable_EPTP_switch){
+	if(cpu_has_vmx_vm_function()){
 		err = vmx_enable_EPTP_switch(vmx);
 		if(err)
 			goto free_vmcs;
 	}
-
+     
+    ept_list_config_test(vmx);
 	return &vmx->vcpu;
 
 free_vmcs:
