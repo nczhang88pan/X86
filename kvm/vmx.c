@@ -831,6 +831,7 @@ static int alloc_identity_pagetable(struct kvm *kvm);
 static void vmx_eptp_list_pg_init(struct kvm_vcpu *vcpu ,u64 eptp);
 static DEFINE_PER_CPU(struct vmcs *, vmxarea);
 static DEFINE_PER_CPU(struct vmcs *, current_vmcs);
+static void ept_list_config_test(struct vcpu_vmx * vmx);
 /*
  * We maintain a per-CPU linked-list of VMCS loaded on that CPU. This is needed
  * when a CPU is brought down, and we need to VMCLEAR all VMCSs loaded on it.
