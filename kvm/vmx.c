@@ -7645,7 +7645,7 @@ static int vmx_enable_EPTP_switch(struct vcpu_vmx *vmx)
 	exec_control |=SECONDARY_EXEC_VM_FUNCTION;
 	vmcs_write32(SECONDARY_VM_EXEC_CONTROL,exec_control);
 	printk(KERN_DEBUG "in vmx_enable_EPTP_switch");
-	printk(KERN_DEBUG "申请到的eptp:addr 0x%lx",page_to_phys(vmx->eptp_list_pg));
+	printk(KERN_DEBUG "申请到的eptp:addr 0x%016lx",page_to_phys(vmx->eptp_list_pg));
 	return 0;
 }
 
@@ -7664,9 +7664,8 @@ static void vmx_eptp_list_pg_init(struct kvm_vcpu *vcpu ,u64 eptp)
 {
 	struct vcpu_vmx *vmx = to_vmx(vcpu);
 	u64 *eptp_list_buf;
-    u64  vm_func_msr;
 	eptp_list_buf = page_address(vmx->eptp_list_pg);
-	int i=0;
+	u32 i=0;
 	for(;i<EPTP_NUM;i++){
 		eptp_list_buf[i]= eptp ;
 	}
@@ -7683,9 +7682,9 @@ static void ept_list_config_test(struct vcpu_vmx * vmx){
 	rdmsrl(MSR_IA32_VMX_VMFUNC,vm_func_msr);
     ASSERT(vmx->eptp_list_pg);
     eptp_list_buf=vmcs_read64(EPTP_LIST_ADDR);//可能存在问题
-    int i=0;
+    u32 i=0;
     for(;i<10;i++){
-    	printk(KERN_DEBUG "%d : %x",eptp_list_buf[i]);
+    	printk(KERN_DEBUG "0x%08x",eptp_list_buf[i]);
     }
 
 }
