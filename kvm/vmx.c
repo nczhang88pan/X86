@@ -7645,7 +7645,7 @@ static int vmx_enable_EPTP_switch(struct vcpu_vmx *vmx)
 	exec_control |=SECONDARY_EXEC_VM_FUNCTION;
 	vmcs_write32(SECONDARY_VM_EXEC_CONTROL,exec_control);
 	printk(KERN_DEBUG "in vmx_enable_EPTP_switch");
-	printk(KERN_DEBUG "申请到的eptp:addr 0x%016lx",page_to_phys(vmx->eptp_list_pg));
+	printk(KERN_DEBUG "申请到的eptp:addr");
 	return 0;
 }
 
