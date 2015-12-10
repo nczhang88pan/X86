@@ -3622,6 +3622,7 @@ static void vmx_set_cr3(struct kvm_vcpu *vcpu, unsigned long cr3)
 	guest_cr3 = cr3;
 	if (enable_ept) {
 		eptp = construct_eptp(cr3);
+		printk(KERN_DEBUG "in vmx_set_cr3 eptp的值为0x%016lx",eptp);
 		vmx_eptp_list_pg_init(vcpu,eptp);//对eptp_list进行修改
 		ept_list_config_test(to_vmx(vcpu));
 		vmcs_write64(EPT_POINTER, eptp); //将EPTP写入到vmcs EPT_POINTER域中
@@ -7669,6 +7670,7 @@ static void vmx_eptp_list_pg_init(struct kvm_vcpu *vcpu ,u64 eptp)
 	for(;i<EPTP_NUM;i++){
 		eptp_list_buf[i]= eptp ;
 	}
+	printk(KERN_DEBUG "in vmx_eptp_list_pg_init初始化pg完成");
 }
 
 static void ept_list_config_test(struct vcpu_vmx * vmx){
