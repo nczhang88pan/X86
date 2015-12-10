@@ -7680,11 +7680,13 @@ static void ept_list_config_test(struct vcpu_vmx * vmx){
 		printk("secondary_based_VM flag 设置失败");
 	}
 	rdmsrl(MSR_IA32_VMX_VMFUNC,vm_func_msr);
+	printk(KERN_DEBUG "vm_func_msr 0x%08x",vm_func_msr);
     ASSERT(vmx->eptp_list_pg);
     eptp_list_buf=page_address(vmx->pml_pg);//可能存在问题
     u16 i=0;
+    printk("开始打印值");
     for(;i<10;i++){
-    	printk(KERN_DEBUG "0x%08x",eptp_list_buf[i]);
+    	printk(KERN_DEBUG "0x%016lx\n",eptp_list_buf[i]);
     }
 
 }
