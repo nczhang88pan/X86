@@ -49,6 +49,13 @@
  * 2. while doing 1. it walks guest-physical to host-physical
  * If the hardware supports that we don't need to do shadow paging.
  */
+
+//The factor below are for testing!
+ 	int ctest_l=0;
+ 	int ctest_m=0;
+ 	int ctest_n=0;
+//-------cc-------
+
 bool tdp_enabled = false;
 
 enum {
@@ -381,7 +388,6 @@ static void count_spte_clear(u64 *sptep, u64 spte)
 static void __set_spte(u64 *sptep, u64 spte)
 {
 	union split_spte *ssptep, sspte;
-
 	ssptep = (union split_spte *)sptep;
 	sspte = (union split_spte)spte;
 
@@ -1700,7 +1706,7 @@ static void drop_parent_pte(struct kvm_mmu_page *sp,
 	mmu_spte_clear_no_track(parent_pte);
 }
 
-static struct kvm_mmu_page *kvm_mmu_alloc_page(struct kvm_vcpu *vcpu,
+struct kvm_mmu_page *kvm_mmu_alloc_page(struct kvm_vcpu *vcpu,
 					       u64 *parent_pte, int direct)
 {
 	struct kvm_mmu_page *sp;
@@ -2058,7 +2064,7 @@ static bool is_obsolete_sp(struct kvm *kvm, struct kvm_mmu_page *sp)
 	return unlikely(sp->mmu_valid_gen != kvm->arch.mmu_valid_gen);
 }
 
-static struct kvm_mmu_page *kvm_mmu_get_page(struct kvm_vcpu *vcpu,
+struct kvm_mmu_page *kvm_mmu_get_page(struct kvm_vcpu *vcpu,
 					     gfn_t gfn,
 					     gva_t gaddr,
 					     unsigned level,
@@ -2107,6 +2113,7 @@ static struct kvm_mmu_page *kvm_mmu_get_page(struct kvm_vcpu *vcpu,
 		trace_kvm_mmu_get_page(sp, false);
 		return sp;
 	}
+
 	++vcpu->kvm->stat.mmu_cache_miss;
 	sp = kvm_mmu_alloc_page(vcpu, parent_pte, direct);
 	if (!sp)
@@ -2699,7 +2706,6 @@ static int __direct_map(struct kvm_vcpu *vcpu, gpa_t v, int write,
 
 	if (!VALID_PAGE(vcpu->arch.mmu.root_hpa))
 		return 0;
-
 	for_each_shadow_entry(vcpu, (u64)gfn << PAGE_SHIFT, iterator) {
 		if (iterator.level == level) {
 			mmu_set_spte(vcpu, iterator.sptep, ACC_ALL,
@@ -2713,13 +2719,11 @@ static int __direct_map(struct kvm_vcpu *vcpu, gpa_t v, int write,
 		drop_large_spte(vcpu, iterator.sptep);
 		if (!is_shadow_present_pte(*iterator.sptep)) {
 			u64 base_addr = iterator.addr;
-
 			base_addr &= PT64_LVL_ADDR_MASK(iterator.level);
 			pseudo_gfn = base_addr >> PAGE_SHIFT;
 			sp = kvm_mmu_get_page(vcpu, pseudo_gfn, iterator.addr,
 					      iterator.level - 1,
 					      1, ACC_ALL, iterator.sptep);
-
 			link_shadow_page(iterator.sptep, sp, true);
 		}
 	}
@@ -2955,7 +2959,7 @@ exit:
 
 static bool try_async_pf(struct kvm_vcpu *vcpu, bool prefault, gfn_t gfn,
 			 gva_t gva, pfn_t *pfn, bool write, bool *writable);
-static void make_mmu_pages_available(struct kvm_vcpu *vcpu);
+void make_mmu_pages_available(struct kvm_vcpu *vcpu);
 
 static int nonpaging_map(struct kvm_vcpu *vcpu, gva_t v, u32 error_code,
 			 gfn_t gfn, bool prefault)
@@ -3473,6 +3477,13 @@ check_hugepage_cache_consistency(struct kvm_vcpu *vcpu, gfn_t gfn, int level)
 static int tdp_page_fault(struct kvm_vcpu *vcpu, gva_t gpa, u32 error_code,
 			  bool prefault)
 {
+	//----cc----
+
+//	if(ctest_l<50) 
+//	{
+//		printk(KERN_ALERT "------- tdp_page_fault function -------parameter:gpa-->%x,error_code-->%u\n",gpa,error_code);
+//	}
+	//----cc----
 	pfn_t pfn;
 	int r;
 	int level;
@@ -3483,7 +3494,12 @@ static int tdp_page_fault(struct kvm_vcpu *vcpu, gva_t gpa, u32 error_code,
 	bool map_writable;
 
 	MMU_WARN_ON(!VALID_PAGE(vcpu->arch.mmu.root_hpa));
-
+	//----cc----
+//	if(ctest_l<50)
+//	{
+//		printk(KERN_ALERT "The value of Root_hpa --> %x\n",vcpu->arch.mmu.root_hpa);	
+//		ctest_l++;
+//	}
 	if (unlikely(error_code & PFERR_RSVD_MASK)) {
 		r = handle_mmio_page_fault(vcpu, gpa, error_code, true);
 
@@ -4364,7 +4380,7 @@ int kvm_mmu_unprotect_page_virt(struct kvm_vcpu *vcpu, gva_t gva)
 }
 EXPORT_SYMBOL_GPL(kvm_mmu_unprotect_page_virt);
 
-static void make_mmu_pages_available(struct kvm_vcpu *vcpu)
+void make_mmu_pages_available(struct kvm_vcpu *vcpu)
 {
 	LIST_HEAD(invalid_list);
 

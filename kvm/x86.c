@@ -5701,6 +5701,108 @@ static void kvm_pv_kick_cpu_op(struct kvm *kvm, unsigned long flags, int apicid)
 	kvm_irq_delivery_to_apic(kvm, NULL, &lapic_irq, NULL);
 }
 
+//-----rewirte by cc-----
+static u64 c_construct_eptp(unsigned long root_hpa)
+{
+	u64 eptp;
+	eptp = 0x6ull | (3 << 3);
+	eptp |= (root_hpa & PAGE_MASK);
+	return eptp;
+}
+
+void print_sp(struct kvm_mmu_page *sp)
+{
+	printk(KERN_ALERT "sp -> gfn = %x!\n",sp->gfn);
+	printk(KERN_ALERT "sp -> spt = %x!\n",sp->spt);
+}
+
+static struct kvm_mmu_page *kvm_mmu_get_toppage(struct kvm_vcpu *vcpu,gfn_t gfn,gva_t gaddr,unsigned level,int direct,unsigned access,u64 *parent_pte)
+{
+	union kvm_mmu_page_role role;
+	struct kvm_mmu_page *sp;
+
+	role = vcpu->arch.mmu.base_role;
+	role.level = level;
+	role.direct = direct;
+
+	if(role.direct)
+	{
+		role.cr4_pae = 0;
+	}
+	role.access = access;
+	sp = kvm_mmu_alloc_page(vcpu,parent_pte,direct);
+	if(!sp)
+		return sp;
+	sp->gfn =gfn;
+	sp->role = role;
+	sp->mmu_valid_gen = vcpu->kvm->arch.mmu_valid_gen;
+	return sp;
+}
+
+
+int kvm_mmu_new_eptp(struct kvm_vcpu *vcpu)
+{
+	struct kvm_mmu_page *sp;
+	struct kvm_mmu_page *old_sp;
+	u64 new_eptp;
+	//u64 old_eptp;
+	int hpa1 = 0;
+	int hpa2 = 0;
+	//MMU_WARN_ON(!VALID_PAGE(vcpu->arch.mmu.root_hpa));
+	u64 *sp_gfns;
+
+	hpa_t old_root_hpa = vcpu->arch.mmu.root_hpa;
+	hpa_t new_root_hpa = 0;
+	printk(KERN_ALERT "The old_root_hpa ---> %x!\n",old_root_hpa);
+
+	//---to rewrite mmu_alloc_direct_roots function---
+	if(vcpu->arch.mmu.shadow_root_level == PT64_ROOT_LEVEL) {
+		spin_lock(&vcpu->kvm->mmu_lock);
+		make_mmu_pages_available(vcpu);
+		//kvm_mmu_get_page will check the gfn_t and gva_t,so in order to construct
+		//a new sp,we need to rewrite this function.
+		sp = kvm_mmu_get_toppage(vcpu,0,0,PT64_ROOT_LEVEL,1,7,NULL);
+
+		//This code can be remove?
+		//++sp->root_count;
+
+		spin_unlock(&vcpu->kvm->mmu_lock);
+		new_root_hpa = __pa(sp->spt);
+	}
+	printk(KERN_ALERT "The new_root_hpa ---> %x!\n",new_root_hpa);
+
+	//the follow code to test!
+	sp_gfns = sp->spt;
+	print_sp(sp);
+
+	//---by root_hpa to construct the new_eptp
+	new_eptp = c_construct_eptp(new_root_hpa);
+	printk(KERN_ALERT "The new_eptp ---> %x!\n",new_eptp);
+
+	memcpy(__va(new_root_hpa),__va(old_root_hpa),4*1024);//same PML4
+
+
+	//memcpy(sp,xxx,sizeof(struct kvm_mmu_page));//same kvm_mmu_page
+	old_sp = kvm_mmu_get_page(vcpu,0,0,PT64_ROOT_LEVEL,1,7,NULL);
+	print_sp(old_sp);
+	memcpy(sp,old_sp,sizeof(struct kvm_mmu_page));
+
+	sp->spt = sp_gfns;
+
+	//to test the function memcpy
+	hpa1 = *(int *)(__va(new_root_hpa));
+	hpa2 = *(int *)(__va(old_root_hpa));
+	if(likely(hpa1 == hpa2))
+	{
+		printk(KERN_ALERT "The memcpy function is ok!\n");
+	}else
+	{	
+		printk(KERN_ALERT "There are error in memcpy function!\n");
+		return 0;
+	}
+	return 1;
+}
+
 int kvm_emulate_hypercall(struct kvm_vcpu *vcpu)
 {
 	unsigned long nr, a0, a1, a2, a3, ret;
@@ -5741,6 +5843,13 @@ int kvm_emulate_hypercall(struct kvm_vcpu *vcpu)
 		kvm_pv_kick_cpu_op(vcpu->kvm, a0, a1);
 		ret = 0;
 		break;
+	//---cy---
+	case KVM_HC_MY_CALLNUM:
+		printk(KERN_ALERT "In kvm module!\n");
+		kvm_mmu_new_eptp(vcpu);
+		ret = 0;
+		break;
+	//---cy---
 	default:
 		ret = -KVM_ENOSYS;
 		break;

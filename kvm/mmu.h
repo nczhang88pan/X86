@@ -75,6 +75,19 @@ int handle_mmio_page_fault_common(struct kvm_vcpu *vcpu, u64 addr, bool direct);
 void kvm_init_shadow_mmu(struct kvm_vcpu *vcpu);
 void kvm_init_shadow_ept_mmu(struct kvm_vcpu *vcpu, bool execonly);
 
+struct kvm_mmu_page *kvm_mmu_alloc_page(struct kvm_vcpu *vcpu,
+					       u64 *parent_pte, int direct);
+
+struct kvm_mmu_page *kvm_mmu_get_page(struct kvm_vcpu *vcpu,
+					     gfn_t gfn,
+					     gva_t gaddr,
+					     unsigned level,
+					     int direct,
+					     unsigned access,
+					     u64 *parent_pte);
+
+void make_mmu_pages_available(struct kvm_vcpu *vcpu);
+
 static inline unsigned int kvm_mmu_available_pages(struct kvm *kvm)
 {
 	if (kvm->arch.n_max_mmu_pages > kvm->arch.n_used_mmu_pages)
