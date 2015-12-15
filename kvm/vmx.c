@@ -1092,11 +1092,6 @@ static inline bool cpu_has_vmx_invpcid(void)
 		SECONDARY_EXEC_ENABLE_INVPCID;
 }
 
-static inline bool cpu_has_vmx_vm_function(void)
-{//判断配置的vmcs是否支持vm functions
-	return vmcs_config.cpu_based_2nd_exec_ctrl &
-		SECONDARY_EXEC_VM_FUNCTION;
-}
 
 static inline bool cpu_has_virtual_nmis(void)
 {
@@ -3053,9 +3048,6 @@ static __init int setup_vmcs_config(struct vmcs_config *vmcs_conf)
 					MSR_IA32_VMX_PROCBASED_CTLS2,
 					&_cpu_based_2nd_exec_control) < 0)
 			return -EIO;
-		if (_cpu_based_2nd_exec_control & SECONDARY_EXEC_VM_FUNCTION ){
-			printk(KERN_DEBUG "vm func flag enabled");
-		}
 	}
 #ifndef CONFIG_X86_64
 	if (!(_cpu_based_2nd_exec_control &
