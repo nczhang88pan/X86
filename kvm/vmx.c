@@ -3047,8 +3047,7 @@ static __init int setup_vmcs_config(struct vmcs_config *vmcs_conf)
 			SECONDARY_EXEC_VIRTUAL_INTR_DELIVERY |
 			SECONDARY_EXEC_SHADOW_VMCS |
 			SECONDARY_EXEC_XSAVES |
-			SECONDARY_EXEC_ENABLE_PML |
-			SECONDARY_EXEC_VM_FUNCTION;
+			SECONDARY_EXEC_ENABLE_PML ;
 			//TODO 增加VMFUNC的许可，使得secondary based-cpu vm-func enabled
 		if (adjust_vmx_controls(min2, opt2,
 					MSR_IA32_VMX_PROCBASED_CTLS2,
