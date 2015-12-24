@@ -2058,6 +2058,70 @@ static bool is_obsolete_sp(struct kvm *kvm, struct kvm_mmu_page *sp)
 	return unlikely(sp->mmu_valid_gen != kvm->arch.mmu_valid_gen);
 }
 
+#define for_each_app_gfn_sp(_kvm, _sp, _gfn)				\
+	hlist_for_each_entry(_sp,					\
+	  &(_kvm)->arch.mmu_page_hash[kvm_page_table_hashfn(_gfn)|1<<10], hash_link) \
+		if ((_sp)->gfn != (_gfn)) {} else
+
+static struct kvm_mmu_page *kvm_mmu_get_app_page(struct kvm_vcpu *vcpu,
+					     gfn_t gfn,
+					     gva_t gaddr,
+					     unsigned level,
+					     int direct,
+					     unsigned access,
+					     u64 *parent_pte)
+{
+	union kvm_mmu_page_role role;
+	unsigned quadrant;
+	struct kvm_mmu_page *sp;
+	bool need_sync = false;
+
+	role = vcpu->arch.mmu.base_role;
+	role.level = level;
+	role.direct = direct;
+	if (role.direct)
+		role.cr4_pae = 0;
+	role.access = access;
+	
+	for_each_app_gfn_sp(vcpu->kvm, sp, gfn) {
+		if (is_obsolete_sp(vcpu->kvm, sp))
+			continue;
+
+		if (!need_sync && sp->unsync)
+			need_sync = true;
+
+		if (sp->role.word != role.word)
+			continue;
+
+		if (sp->unsync && kvm_sync_page_transient(vcpu, sp))
+			break;
+
+		mmu_page_add_parent_pte(vcpu, sp, parent_pte);
+		if (sp->unsync_children) {
+			kvm_make_request(KVM_REQ_MMU_SYNC, vcpu);
+			kvm_mmu_mark_parents_unsync(sp);
+		} else if (sp->unsync)
+			kvm_mmu_mark_parents_unsync(sp);
+
+		__clear_sp_write_flooding_count(sp);
+		trace_kvm_mmu_get_page(sp, false);
+		return sp;
+	}
+	++vcpu->kvm->stat.mmu_cache_miss;
+	sp = kvm_mmu_alloc_page(vcpu, parent_pte, direct);
+	if (!sp)
+		return sp;
+	sp->gfn = gfn;
+	sp->role = role;
+	hlist_add_head(&sp->hash_link,
+		&vcpu->kvm->arch.mmu_page_hash[kvm_page_table_hashfn(gfn)|1<<10]);
+
+	sp->mmu_valid_gen = vcpu->kvm->arch.mmu_valid_gen;
+	init_shadow_page_table(sp);
+	trace_kvm_mmu_get_page(sp, true);
+	return sp;
+	
+}
 static struct kvm_mmu_page *kvm_mmu_get_page(struct kvm_vcpu *vcpu,
 					     gfn_t gfn,
 					     gva_t gaddr,
@@ -3099,7 +3163,7 @@ static int mmu_alloc_direct_roots(struct kvm_vcpu *vcpu)
 				      1, ACC_ALL, NULL);
 		++sp->root_count;
 		if(vcpu->os_is_running){
-			sp_new = kvm_mmu_get_page(vcpu, 0, 0, PT64_ROOT_LEVEL,
+			sp_new = kvm_mmu_get_app_page(vcpu, 0, 0, PT64_ROOT_LEVEL,
 		              1, ACC_ALL, NULL);
 			++sp_new->root_count;	
 		}
@@ -3107,6 +3171,8 @@ static int mmu_alloc_direct_roots(struct kvm_vcpu *vcpu)
 		vcpu->arch.mmu.root_hpa = __pa(sp->spt);
 		if(vcpu->os_is_running)
 			vcpu->arch.mmu.root_hpa_for_app = __pa(sp_new->spt);
+		printk(KERN_DEBUG "root_hpa 0x%016xll",vcpu->arch.mmu.root_hpa);
+		printk(KERN_DEBUG "root_hpa_app 0x%016xll",vcpu->arch.mmu.root_hpa_for_app);
 		
 	} else if (vcpu->arch.mmu.shadow_root_level == PT32E_ROOT_LEVEL) {
 		for (i = 0; i < 4; ++i) {
