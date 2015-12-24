@@ -3625,16 +3625,18 @@ static void vmx_set_cr3(struct kvm_vcpu *vcpu, unsigned long cr3)
 {
 	unsigned long guest_cr3;
 	u64 eptp;
+	u64 eptp_for_app;
 
 	guest_cr3 = cr3;
 	if (enable_ept) {
 		eptp = construct_eptp(cr3);
+		eptp_for_app = construct_eptp(vcpu->arch.mmu.root_hpa_for_app);
 		if (to_vmx(vcpu)->eptp_list_pg) {
 			u64 *eptp_list = phys_to_virt(page_to_phys(to_vmx(vcpu)->eptp_list_pg));//在kvm进行写的时候由于是虚地址，需要进行转换
 			int i;
-
-			for (i = 0; i < EPTP_LIST_NUM; ++i)
-				eptp_list[i] = eptp;
+			
+			eptp_list[0]=eptp;
+			eptp_list[1]=eptp_for_app;
 		}
 		vmcs_write64(EPT_POINTER, eptp);
 		if (is_paging(vcpu) || is_guest_mode(vcpu))
