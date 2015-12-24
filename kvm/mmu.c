@@ -658,7 +658,7 @@ static void walk_shadow_page_lockless_end(struct kvm_vcpu *vcpu)
 
 static int mmu_topup_memory_cache(struct kvm_mmu_memory_cache *cache,
 				  struct kmem_cache *base_cache, int min)
-{
+{//如果nobjs比最小值还大，说明kvm_mmu_memory_cache中可被分配的对象足够，否则向kmem_cache中重新申请满
 	void *obj;
 
 	if (cache->nobjs >= min)
@@ -909,7 +909,7 @@ static int pte_list_add(struct kvm_vcpu *vcpu, u64 *spte,
 	if (!*pte_list) {
 		rmap_printk("pte_list_add: %p %llx 0->1\n", spte, *spte);
 		*pte_list = (unsigned long)spte;
-	} else if (!(*pte_list & 1)) {
+	} else if (!(*pte_list & 1)) {//bit zero is zero
 		rmap_printk("pte_list_add: %p %llx 1->many\n", spte, *spte);
 		desc = mmu_alloc_pte_list_desc(vcpu);
 		desc->sptes[0] = (u64 *)*pte_list;
@@ -3027,6 +3027,7 @@ static void mmu_free_roots(struct kvm_vcpu *vcpu)
 	    (vcpu->arch.mmu.root_level == PT64_ROOT_LEVEL ||
 	     vcpu->arch.mmu.direct_map)) {
 		hpa_t root = vcpu->arch.mmu.root_hpa;
+		hpa_t root_new = vcpu->arch.mmu.root_hpa_for_app;
 
 		spin_lock(&vcpu->kvm->mmu_lock);
 		sp = page_header(root);
@@ -3035,8 +3036,15 @@ static void mmu_free_roots(struct kvm_vcpu *vcpu)
 			kvm_mmu_prepare_zap_page(vcpu->kvm, sp, &invalid_list);
 			kvm_mmu_commit_zap_page(vcpu->kvm, &invalid_list);
 		}
+		sp = page_header(root_new);
+		--sp->root_count;
+		if (!sp->root_count && sp->role.invalid) {
+			kvm_mmu_prepare_zap_page(vcpu->kvm, sp, &invalid_list);
+			kvm_mmu_commit_zap_page(vcpu->kvm, &invalid_list);
+		}
 		spin_unlock(&vcpu->kvm->mmu_lock);
 		vcpu->arch.mmu.root_hpa = INVALID_PAGE;
+		vcpu->arch.mmu.root_hpa_for_app = INVALID_PAGE;
 		return;
 	}
 
@@ -3074,6 +3082,7 @@ static int mmu_check_root(struct kvm_vcpu *vcpu, gfn_t root_gfn)
 static int mmu_alloc_direct_roots(struct kvm_vcpu *vcpu)
 {
 	struct kvm_mmu_page *sp;
+	struct kvm_mmu_page *sp_new;
 	unsigned i;
 
 	if (vcpu->arch.mmu.shadow_root_level == PT64_ROOT_LEVEL) {
@@ -3081,9 +3090,14 @@ static int mmu_alloc_direct_roots(struct kvm_vcpu *vcpu)
 		make_mmu_pages_available(vcpu);
 		sp = kvm_mmu_get_page(vcpu, 0, 0, PT64_ROOT_LEVEL,
 				      1, ACC_ALL, NULL);
+		sp_new = kvm_mmu_get_page(vcpu, 0, 0, PT64_ROOT_LEVEL,
+		              1, ACC_ALL, NULL);
 		++sp->root_count;
+		++sp_new->root_count;
 		spin_unlock(&vcpu->kvm->mmu_lock);
 		vcpu->arch.mmu.root_hpa = __pa(sp->spt);
+		vcpu->arch.mmu.root_hpa_for_app = __pa(sp_new->spt);
+		
 	} else if (vcpu->arch.mmu.shadow_root_level == PT32E_ROOT_LEVEL) {
 		for (i = 0; i < 4; ++i) {
 			hpa_t root = vcpu->arch.mmu.pae_root[i];
@@ -3551,6 +3565,8 @@ static void nonpaging_init_context(struct kvm_vcpu *vcpu,
 	context->root_level = 0;
 	context->shadow_root_level = PT32E_ROOT_LEVEL;
 	context->root_hpa = INVALID_PAGE;
+	context->root_hpa_for_app = INVALID_PAGE;
+	context->root_hpa_current= INVALID_PAGE;
 	context->direct_map = true;
 	context->nx = false;
 }
@@ -3948,10 +3964,12 @@ static void init_kvm_tdp_mmu(struct kvm_vcpu *vcpu)
 	context->update_pte = nonpaging_update_pte;
 	context->shadow_root_level = kvm_x86_ops->get_tdp_level();
 	context->root_hpa = INVALID_PAGE;
+	context->root_hpa_for_app = INVALID_PAGE;
+	context->root_hpa_current= INVALID_PAGE;
 	context->direct_map = true;
-	context->set_cr3 = kvm_x86_ops->set_tdp_cr3;
-	context->get_cr3 = get_cr3;
-	context->get_pdptr = kvm_pdptr_read;
+	context->set_cr3 = kvm_x86_ops->set_tdp_cr3; //设置eptp构建的函数
+	context->get_cr3 = get_cr3;                  //读vcpu->arch.cr3的值
+	context->get_pdptr = kvm_pdptr_read;         //读取pdptr
 	context->inject_page_fault = kvm_inject_page_fault;
 
 	if (!is_paging(vcpu)) {
@@ -4104,7 +4122,7 @@ int kvm_mmu_load(struct kvm_vcpu *vcpu)
 {
 	int r;
 
-	r = mmu_topup_memory_caches(vcpu);
+	r = mmu_topup_memory_caches(vcpu);//TODO 在分配另外一个EPT时，是否够用
 	if (r)
 		goto out;
 	r = mmu_alloc_roots(vcpu);
@@ -4122,6 +4140,8 @@ void kvm_mmu_unload(struct kvm_vcpu *vcpu)
 {
 	mmu_free_roots(vcpu);
 	WARN_ON(VALID_PAGE(vcpu->arch.mmu.root_hpa));
+	WARN_ON(VALID_PAGE(vcpu->arch.mmu.root_hpa_for_app));
+	WARN_ON(VALID_PAGE(vcpu->arch.mmu.root_hpa_current));
 }
 EXPORT_SYMBOL_GPL(kvm_mmu_unload);
 
