@@ -3169,10 +3169,11 @@ static int mmu_alloc_direct_roots(struct kvm_vcpu *vcpu)
 		}
 		spin_unlock(&vcpu->kvm->mmu_lock);
 		vcpu->arch.mmu.root_hpa = __pa(sp->spt);
-		if(vcpu->os_is_running)
+		if(vcpu->os_is_running){
 			vcpu->arch.mmu.root_hpa_for_app = __pa(sp_new->spt);
-		printk(KERN_DEBUG "root_hpa 0x%016xll",vcpu->arch.mmu.root_hpa);
-		printk(KERN_DEBUG "root_hpa_app 0x%016xll",vcpu->arch.mmu.root_hpa_for_app);
+			printk(KERN_DEBUG "root_hpa 0x%016llx",vcpu->arch.mmu.root_hpa);
+			printk(KERN_DEBUG "root_hpa_app 0x%016llx",vcpu->arch.mmu.root_hpa_for_app);
+		}
 		
 	} else if (vcpu->arch.mmu.shadow_root_level == PT32E_ROOT_LEVEL) {
 		for (i = 0; i < 4; ++i) {

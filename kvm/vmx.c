@@ -3633,7 +3633,6 @@ static void vmx_set_cr3(struct kvm_vcpu *vcpu, unsigned long cr3)
 		eptp_for_app = construct_eptp(vcpu->arch.mmu.root_hpa_for_app);
 		if (to_vmx(vcpu)->eptp_list_pg) {
 			u64 *eptp_list = phys_to_virt(page_to_phys(to_vmx(vcpu)->eptp_list_pg));//在kvm进行写的时候由于是虚地址，需要进行转换
-			int i;
 			
 			eptp_list[0]=eptp;
 			eptp_list[1]=eptp_for_app;
