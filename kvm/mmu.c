@@ -3100,7 +3100,7 @@ static void mmu_free_roots(struct kvm_vcpu *vcpu)
 			kvm_mmu_prepare_zap_page(vcpu->kvm, sp, &invalid_list);
 			kvm_mmu_commit_zap_page(vcpu->kvm, &invalid_list);
 		}
-		if(vcpu->os_is_running){
+		if(vcpu->arch.mmu.mmu_is_stabilized){
 			sp = page_header(root_new);
 			--sp->root_count;
 			if (!sp->root_count && sp->role.invalid) {
@@ -3112,7 +3112,7 @@ static void mmu_free_roots(struct kvm_vcpu *vcpu)
 		vcpu->arch.mmu.root_hpa = INVALID_PAGE;
 		vcpu->arch.mmu.root_hpa_for_app = INVALID_PAGE;
 		vcpu->arch.mmu.root_hpa_current = INVALID_PAGE;
-		vcpu->os_is_running=false;
+		vcpu->arch.mmu.mmu_is_stabilized=false;
 		return;
 	}
 
@@ -3154,7 +3154,7 @@ static int mmu_alloc_direct_roots(struct kvm_vcpu *vcpu)
 	unsigned i;
     mmuload_round++;
 	if(!(mmuload_round%34)){
-		vcpu->os_is_running=true;
+		vcpu->arch.mmu.mmu_is_stabilized = true;
 	}
 	if (vcpu->arch.mmu.shadow_root_level == PT64_ROOT_LEVEL) {
 		spin_lock(&vcpu->kvm->mmu_lock);
@@ -3162,14 +3162,14 @@ static int mmu_alloc_direct_roots(struct kvm_vcpu *vcpu)
 		sp = kvm_mmu_get_page(vcpu, 0, 0, PT64_ROOT_LEVEL,
 				      1, ACC_ALL, NULL);
 		++sp->root_count;
-		if(vcpu->os_is_running){
+		if(vcpu->arch.mmu.mmu_is_stabilized){
 			sp_new = kvm_mmu_get_app_page(vcpu, 0, 0, PT64_ROOT_LEVEL,
 		              1, ACC_ALL, NULL);
 			++sp_new->root_count;	
 		}
 		spin_unlock(&vcpu->kvm->mmu_lock);
 		vcpu->arch.mmu.root_hpa = __pa(sp->spt);
-		if(vcpu->os_is_running){
+		if(vcpu->arch.mmu.mmu_is_stabilized){
 			vcpu->arch.mmu.root_hpa_for_app = __pa(sp_new->spt);
 			printk(KERN_DEBUG "root_hpa 0x%016llx",vcpu->arch.mmu.root_hpa);
 			printk(KERN_DEBUG "root_hpa_app 0x%016llx",vcpu->arch.mmu.root_hpa_for_app);
@@ -3562,6 +3562,76 @@ check_hugepage_cache_consistency(struct kvm_vcpu *vcpu, gfn_t gfn, int level)
 }
 
 static int tdp_page_fault(struct kvm_vcpu *vcpu, gva_t gpa, u32 error_code,
+			  bool prefault)
+{
+	pfn_t pfn;
+	int r;
+	int level;
+	int force_pt_level;
+	gfn_t gfn = gpa >> PAGE_SHIFT;
+	unsigned long mmu_seq;
+	int write = error_code & PFERR_WRITE_MASK;
+	bool map_writable;
+
+	MMU_WARN_ON(!VALID_PAGE(vcpu->arch.mmu.root_hpa));
+
+	if (unlikely(error_code & PFERR_RSVD_MASK)) {
+		r = handle_mmio_page_fault(vcpu, gpa, error_code, true);
+
+		if (likely(r != RET_MMIO_PF_INVALID))
+			return r;
+	}
+
+	r = mmu_topup_memory_caches(vcpu);
+	if (r)
+		return r;
+
+	if (mapping_level_dirty_bitmap(vcpu, gfn) ||
+	    !check_hugepage_cache_consistency(vcpu, gfn, PT_DIRECTORY_LEVEL))
+		force_pt_level = 1;
+	else
+		force_pt_level = 0;
+
+	if (likely(!force_pt_level)) {
+		level = mapping_level(vcpu, gfn);
+		if (level > PT_DIRECTORY_LEVEL &&
+		    !check_hugepage_cache_consistency(vcpu, gfn, level))
+			level = PT_DIRECTORY_LEVEL;
+		gfn &= ~(KVM_PAGES_PER_HPAGE(level) - 1);
+	} else
+		level = PT_PAGE_TABLE_LEVEL;
+
+	if (fast_page_fault(vcpu, gpa, level, error_code))
+		return 0;
+
+	mmu_seq = vcpu->kvm->mmu_notifier_seq;
+	smp_rmb();
+
+	if (try_async_pf(vcpu, prefault, gfn, gpa, &pfn, write, &map_writable))
+		return 0;
+
+	if (handle_abnormal_pfn(vcpu, 0, gfn, pfn, ACC_ALL, &r))
+		return r;
+
+	spin_lock(&vcpu->kvm->mmu_lock);
+	if (mmu_notifier_retry(vcpu->kvm, mmu_seq))
+		goto out_unlock;
+	make_mmu_pages_available(vcpu);
+	if (likely(!force_pt_level))
+		transparent_hugepage_adjust(vcpu, &gfn, &pfn, &level);
+	r = __direct_map(vcpu, gpa, write, map_writable,
+			 level, gfn, pfn, prefault);
+	spin_unlock(&vcpu->kvm->mmu_lock);
+
+	return r;
+
+out_unlock:
+	spin_unlock(&vcpu->kvm->mmu_lock);
+	kvm_release_pfn_clean(pfn);
+	return 0;
+}
+
+static int new_tdp_page_fault(struct kvm_vcpu *vcpu, gva_t gpa, u32 error_code,
 			  bool prefault)
 {
 	pfn_t pfn;
@@ -4036,6 +4106,8 @@ static void init_kvm_tdp_mmu(struct kvm_vcpu *vcpu)
 	context->base_role.word = 0;
 	context->base_role.smm = is_smm(vcpu);
 	context->page_fault = tdp_page_fault;
+	context->app_page_fault = new_tdp_page_fault;
+	context->in_eptp_for_app = false;
 	context->sync_page = nonpaging_sync_page;
 	context->invlpg = nonpaging_invlpg;
 	context->update_pte = nonpaging_update_pte;
@@ -4048,6 +4120,7 @@ static void init_kvm_tdp_mmu(struct kvm_vcpu *vcpu)
 	context->get_cr3 = get_cr3;                  //读vcpu->arch.cr3的值
 	context->get_pdptr = kvm_pdptr_read;         //读取pdptr
 	context->inject_page_fault = kvm_inject_page_fault;
+	context->mmu_is_stabilized = false;
 
 	if (!is_paging(vcpu)) {
 		context->nx = false;
@@ -4490,8 +4563,12 @@ int kvm_mmu_page_fault(struct kvm_vcpu *vcpu, gva_t cr2, u32 error_code,
 {
 	int r, emulation_type = EMULTYPE_RETRY;
 	enum emulation_result er;
-
-	r = vcpu->arch.mmu.page_fault(vcpu, cr2, error_code, false);
+	
+	if(vcpu->arch.mmu.in_eptp_for_app){
+		r = vcpu->arch.mmu.app_page_fault(vcpu, cr2, error_code, false);
+	}else{
+		r = vcpu->arch.mmu.page_fault(vcpu, cr2, error_code, false);	
+	}
 	if (r < 0)
 		goto out;
 

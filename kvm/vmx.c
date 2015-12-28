@@ -8492,6 +8492,16 @@ static void __noclone vmx_vcpu_run(struct kvm_vcpu *vcpu)
 	/* MSR_IA32_DEBUGCTLMSR is zeroed on vmexit. Restore it if needed */
 	if (debugctlmsr)
 		update_debugctlmsr(debugctlmsr);
+		
+	if (vcpu->arch.mmu.mmu_is_stabilized){
+		vcpu->arch.mmu.root_hpa_current = vmcs_read64(EPT_POINTER);
+		if(vcpu->arch.mmu.root_hpa_current == (vcpu->arch.mmu.root_hpa_for_app + 0x1e)){
+			printk(KERN_DEBUG "change the world");
+			vcpu->arch.mmu.in_eptp_for_app = true;
+		}else{
+			vcpu->arch.mmu.in_eptp_for_app = false;
+		}
+	}
 
 #ifndef CONFIG_X86_64
 	/*

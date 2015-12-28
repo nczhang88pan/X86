@@ -269,6 +269,8 @@ struct kvm_mmu {
 	u64 (*get_pdptr)(struct kvm_vcpu *vcpu, int index);
 	int (*page_fault)(struct kvm_vcpu *vcpu, gva_t gva, u32 err,
 			  bool prefault);
+	int (*app_page_fault)(struct kvm_vcpu *vcpu, gva_t gva, u32 err,
+			  bool prefault);
 	void (*inject_page_fault)(struct kvm_vcpu *vcpu,
 				  struct x86_exception *fault);
 	gpa_t (*gva_to_gpa)(struct kvm_vcpu *vcpu, gva_t gva, u32 access,
@@ -283,6 +285,8 @@ struct kvm_mmu {
 	hpa_t root_hpa;
 	hpa_t root_hpa_for_app;//隔离应用的hpa
 	hpa_t root_hpa_current;//当前正在使用的hpa
+	bool  in_eptp_for_app ;//当前是否切换到了eptp2
+	bool  mmu_is_stabilized;//已经进入到了操作系统中，并稳定
 	int root_level;
 	int shadow_root_level;
 	union kvm_mmu_page_role base_role;
