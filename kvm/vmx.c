@@ -5755,6 +5755,18 @@ static int handle_ept_violation(struct kvm_vcpu *vcpu)
 		vcpu->run->hw.hardware_exit_reason = EXIT_REASON_EPT_VIOLATION;
 		return 0;
 	}
+	
+	if(vcpu->arch.mmu.in_eptp_for_app){
+		//printk(KERN_DEBUG "fuck this world and change this back");
+        //vmcs_write64(EPT_POINTER , vcpu->arch.mmu.root_hpa + 0x1e);
+		printk(KERN_DEBUG "EPT: GPA: 0x%lx, GVA: 0x%lx\n",
+			(long unsigned int)vmcs_read64(GUEST_PHYSICAL_ADDRESS),
+			vmcs_readl(GUEST_LINEAR_ADDRESS));
+		printk(KERN_DEBUG "EPT: Exit qualification is 0x%lx\n",
+			(long unsigned int)exit_qualification);
+		printk(KERN_DEBUG "EPT: Exit reason is 0x%lx\n",
+			(long unsigned int)(to_vmx(vcpu)->exit_reason));
+	}
 
 	/*
 	 * EPT violation happened while executing iret from NMI,

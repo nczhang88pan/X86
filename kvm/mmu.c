@@ -146,20 +146,29 @@ struct pte_list_desc {
 };
 
 struct kvm_shadow_walk_iterator {
-	u64 addr;
-	hpa_t shadow_addr;
-	u64 *sptep;
-	int level;
-	unsigned index;
+	u64 addr;          //目标帧 gfn<<PAGE_SHIFT
+	hpa_t shadow_addr; //当前EPT页表项的物理基地址
+	u64 *sptep;        //下一级别的EPT页表的指针
+	int level;         //当前页表所处的级别
+	unsigned index;    //当前页表的索引
 };
 
 #define for_each_shadow_entry(_vcpu, _addr, _walker)    \
 	for (shadow_walk_init(&(_walker), _vcpu, _addr);	\
 	     shadow_walk_okay(&(_walker));			\
 	     shadow_walk_next(&(_walker)))
+#define for_each_shadow_entry_for_app(_vcpu, _addr, _walker)    \
+	for (shadow_walk_init_for_app(&(_walker), _vcpu, _addr);	\
+	     shadow_walk_okay(&(_walker));			\
+	     shadow_walk_next(&(_walker)))
 
 #define for_each_shadow_entry_lockless(_vcpu, _addr, _walker, spte)	\
 	for (shadow_walk_init(&(_walker), _vcpu, _addr);		\
+	     shadow_walk_okay(&(_walker)) &&				\
+		({ spte = mmu_spte_get_lockless(_walker.sptep); 1; });	\
+	     __shadow_walk_next(&(_walker), spte))
+#define for_each_shadow_entry_lockless_for_app(_vcpu, _addr, _walker, spte)	\
+	for (shadow_walk_init_for_app(&(_walker), _vcpu, _addr);		\
 	     shadow_walk_okay(&(_walker)) &&				\
 		({ spte = mmu_spte_get_lockless(_walker.sptep); 1; });	\
 	     __shadow_walk_next(&(_walker), spte))
@@ -1663,7 +1672,7 @@ static inline void kvm_mod_used_mmu_pages(struct kvm *kvm, int nr)
 }
 
 static void kvm_mmu_free_page(struct kvm_mmu_page *sp)
-{
+{//TODO mmu_page free时的清理工作
 	MMU_WARN_ON(!is_empty_shadow_page(sp->spt));
 	hlist_del(&sp->hash_link);
 	list_del(&sp->link);
@@ -2072,7 +2081,6 @@ static struct kvm_mmu_page *kvm_mmu_get_app_page(struct kvm_vcpu *vcpu,
 					     u64 *parent_pte)
 {
 	union kvm_mmu_page_role role;
-	unsigned quadrant;
 	struct kvm_mmu_page *sp;
 	bool need_sync = false;
 
@@ -2213,6 +2221,19 @@ static void shadow_walk_init(struct kvm_shadow_walk_iterator *iterator,
 		if (!iterator->shadow_addr)
 			iterator->level = 0;
 	}
+}
+
+static void shadow_walk_init_for_app(struct kvm_shadow_walk_iterator *iterator,
+			     struct kvm_vcpu *vcpu, u64 addr)
+{
+	iterator->addr = addr;
+	iterator->shadow_addr = vcpu->arch.mmu.root_hpa_for_app;
+	iterator->level = vcpu->arch.mmu.shadow_root_level;
+
+	if (iterator->level == PT64_ROOT_LEVEL &&
+	    vcpu->arch.mmu.root_level < PT64_ROOT_LEVEL &&
+	    !vcpu->arch.mmu.direct_map)
+		--iterator->level; 
 }
 
 static bool shadow_walk_okay(struct kvm_shadow_walk_iterator *iterator)
@@ -2765,6 +2786,43 @@ static int __direct_map(struct kvm_vcpu *vcpu, gpa_t v, int write,
 		return 0;
 
 	for_each_shadow_entry(vcpu, (u64)gfn << PAGE_SHIFT, iterator) {
+		if (iterator.level == level) {
+			mmu_set_spte(vcpu, iterator.sptep, ACC_ALL,
+				     write, &emulate, level, gfn, pfn,
+				     prefault, map_writable);
+			direct_pte_prefetch(vcpu, iterator.sptep);
+			++vcpu->stat.pf_fixed;
+			break;
+		}
+
+		drop_large_spte(vcpu, iterator.sptep);
+		if (!is_shadow_present_pte(*iterator.sptep)) {
+			u64 base_addr = iterator.addr;
+
+			base_addr &= PT64_LVL_ADDR_MASK(iterator.level);
+			pseudo_gfn = base_addr >> PAGE_SHIFT;
+			sp = kvm_mmu_get_page(vcpu, pseudo_gfn, iterator.addr,
+					      iterator.level - 1,
+					      1, ACC_ALL, iterator.sptep);
+
+			link_shadow_page(iterator.sptep, sp, true);
+		}
+	}
+	return emulate;
+}
+static int __direct_map_for_app(struct kvm_vcpu *vcpu, gpa_t v, int write,
+			int map_writable, int level, gfn_t gfn, pfn_t pfn,
+			bool prefault)
+{
+	struct kvm_shadow_walk_iterator iterator;
+	struct kvm_mmu_page *sp;
+	int emulate = 0;
+	gfn_t pseudo_gfn;
+
+	if (!VALID_PAGE(vcpu->arch.mmu.root_hpa_for_app))
+		return 0;
+
+	for_each_shadow_entry_for_app(vcpu, (u64)gfn << PAGE_SHIFT, iterator) {
 		if (iterator.level == level) {
 			mmu_set_spte(vcpu, iterator.sptep, ACC_ALL,
 				     write, &emulate, level, gfn, pfn,
