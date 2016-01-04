@@ -5736,38 +5736,26 @@ static int handle_task_switch(struct kvm_vcpu *vcpu)
 
 static int handle_ept_violation(struct kvm_vcpu *vcpu)
 {
+	//TODO
 	unsigned long exit_qualification;
 	gpa_t gpa;
 	u32 error_code;
 	int gla_validity;
-
+	
 	exit_qualification = vmcs_readl(EXIT_QUALIFICATION);
-
 	gla_validity = (exit_qualification >> 7) & 0x3;
 	if (gla_validity != 0x3 && gla_validity != 0x1 && gla_validity != 0) {
-		printk(KERN_ERR "EPT: Handling EPT violation failed!\n");
+		/*printk(KERN_ERR "EPT: Handling EPT violation failed!\n");
 		printk(KERN_ERR "EPT: GPA: 0x%lx, GVA: 0x%lx\n",
 			(long unsigned int)vmcs_read64(GUEST_PHYSICAL_ADDRESS),
 			vmcs_readl(GUEST_LINEAR_ADDRESS));
 		printk(KERN_ERR "EPT: Exit qualification is 0x%lx\n",
-			(long unsigned int)exit_qualification);
+			(long unsigned int)exit_qualification);*/
 		vcpu->run->exit_reason = KVM_EXIT_UNKNOWN;
 		vcpu->run->hw.hardware_exit_reason = EXIT_REASON_EPT_VIOLATION;
 		return 0;
 	}
 	
-	if(vcpu->arch.mmu.in_eptp_for_app){
-		//printk(KERN_DEBUG "fuck this world and change this back");
-        //vmcs_write64(EPT_POINTER , vcpu->arch.mmu.root_hpa + 0x1e);
-		printk(KERN_DEBUG "EPT: GPA: 0x%lx, GVA: 0x%lx\n",
-			(long unsigned int)vmcs_read64(GUEST_PHYSICAL_ADDRESS),
-			vmcs_readl(GUEST_LINEAR_ADDRESS));
-		printk(KERN_DEBUG "EPT: Exit qualification is 0x%lx\n",
-			(long unsigned int)exit_qualification);
-		printk(KERN_DEBUG "EPT: Exit reason is 0x%lx\n",
-			(long unsigned int)(to_vmx(vcpu)->exit_reason));
-	}
-
 	/*
 	 * EPT violation happened while executing iret from NMI,
 	 * "blocked by NMI" bit has to be set before next VM entry.
@@ -5790,7 +5778,7 @@ static int handle_ept_violation(struct kvm_vcpu *vcpu)
 	error_code |= (exit_qualification >> 3) & PFERR_PRESENT_MASK;
 
 	vcpu->arch.exit_qualification = exit_qualification;
-
+	
 	return kvm_mmu_page_fault(vcpu, gpa, error_code, NULL, 0);
 }
 
@@ -8508,7 +8496,7 @@ static void __noclone vmx_vcpu_run(struct kvm_vcpu *vcpu)
 	if (vcpu->arch.mmu.mmu_is_stabilized){
 		vcpu->arch.mmu.root_hpa_current = vmcs_read64(EPT_POINTER);
 		if(vcpu->arch.mmu.root_hpa_current == (vcpu->arch.mmu.root_hpa_for_app + 0x1e)){
-			printk(KERN_DEBUG "change the world");
+			//printk(KERN_DEBUG "change the world");
 			vcpu->arch.mmu.in_eptp_for_app = true;
 		}else{
 			vcpu->arch.mmu.in_eptp_for_app = false;

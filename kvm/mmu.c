@@ -157,8 +157,8 @@ struct kvm_shadow_walk_iterator {
 	for (shadow_walk_init(&(_walker), _vcpu, _addr);	\
 	     shadow_walk_okay(&(_walker));			\
 	     shadow_walk_next(&(_walker)))
-#define for_each_shadow_entry_for_app(_vcpu, _addr, _walker)    \
-	for (shadow_walk_init_for_app(&(_walker), _vcpu, _addr);	\
+#define for_each_shadow_entry_sec(_vcpu, _addr, _walker)    \
+	for (shadow_walk_init_sec(&(_walker), _vcpu, _addr);	\
 	     shadow_walk_okay(&(_walker));			\
 	     shadow_walk_next(&(_walker)))
 
@@ -167,8 +167,8 @@ struct kvm_shadow_walk_iterator {
 	     shadow_walk_okay(&(_walker)) &&				\
 		({ spte = mmu_spte_get_lockless(_walker.sptep); 1; });	\
 	     __shadow_walk_next(&(_walker), spte))
-#define for_each_shadow_entry_lockless_for_app(_vcpu, _addr, _walker, spte)	\
-	for (shadow_walk_init_for_app(&(_walker), _vcpu, _addr);		\
+#define for_each_shadow_entry_lockless_sec(_vcpu, _addr, _walker, spte)	\
+	for (shadow_walk_init_sec(&(_walker), _vcpu, _addr);		\
 	     shadow_walk_okay(&(_walker)) &&				\
 		({ spte = mmu_spte_get_lockless(_walker.sptep); 1; });	\
 	     __shadow_walk_next(&(_walker), spte))
@@ -2092,6 +2092,7 @@ static struct kvm_mmu_page *kvm_mmu_get_app_page(struct kvm_vcpu *vcpu,
 	role.access = access;
 	
 	for_each_app_gfn_sp(vcpu->kvm, sp, gfn) {
+		printk(KERN_DEBUG "GO BACK from for_each_app_gfn_sp\n");
 		if (is_obsolete_sp(vcpu->kvm, sp))
 			continue;
 
@@ -2156,6 +2157,10 @@ static struct kvm_mmu_page *kvm_mmu_get_page(struct kvm_vcpu *vcpu,
 		role.quadrant = quadrant;
 	}
 	for_each_gfn_sp(vcpu->kvm, sp, gfn) {
+        //TEST
+        if(vcpu->arch.mmu.in_eptp_for_app)
+            printk(KERN_DEBUG "In the for_each_gfn_sp!\n");
+             
 		if (is_obsolete_sp(vcpu->kvm, sp))
 			continue;
 
@@ -2223,7 +2228,7 @@ static void shadow_walk_init(struct kvm_shadow_walk_iterator *iterator,
 	}
 }
 
-static void shadow_walk_init_for_app(struct kvm_shadow_walk_iterator *iterator,
+static void shadow_walk_init_sec(struct kvm_shadow_walk_iterator *iterator,
 			     struct kvm_vcpu *vcpu, u64 addr)
 {
 	iterator->addr = addr;
@@ -2810,19 +2815,30 @@ static int __direct_map(struct kvm_vcpu *vcpu, gpa_t v, int write,
 	}
 	return emulate;
 }
-static int __direct_map_for_app(struct kvm_vcpu *vcpu, gpa_t v, int write,
+
+//write by cc
+static int new_direct_map(struct kvm_vcpu *vcpu, gpa_t v, int write,
 			int map_writable, int level, gfn_t gfn, pfn_t pfn,
 			bool prefault)
 {
-	struct kvm_shadow_walk_iterator iterator;
+    struct kvm_shadow_walk_iterator iterator;
 	struct kvm_mmu_page *sp;
 	int emulate = 0;
 	gfn_t pseudo_gfn;
-
-	if (!VALID_PAGE(vcpu->arch.mmu.root_hpa_for_app))
-		return 0;
-
-	for_each_shadow_entry_for_app(vcpu, (u64)gfn << PAGE_SHIFT, iterator) {
+    
+    if(!vcpu->arch.mmu.in_eptp_for_app)
+    {
+        printk(KERN_ERR "Not in the new_eptp!\n");
+        return 0;
+    }
+    
+    if(!VALID_PAGE(vcpu->arch.mmu.root_hpa_current))
+    {
+        printk(KERN_ERR "The new_eptp not init right!");
+        return 0;
+    }
+    
+    for_each_shadow_entry_sec(vcpu, (u64)gfn << PAGE_SHIFT, iterator) {
 		if (iterator.level == level) {
 			mmu_set_spte(vcpu, iterator.sptep, ACC_ALL,
 				     write, &emulate, level, gfn, pfn,
@@ -2831,22 +2847,25 @@ static int __direct_map_for_app(struct kvm_vcpu *vcpu, gpa_t v, int write,
 			++vcpu->stat.pf_fixed;
 			break;
 		}
-
 		drop_large_spte(vcpu, iterator.sptep);
 		if (!is_shadow_present_pte(*iterator.sptep)) {
 			u64 base_addr = iterator.addr;
 
 			base_addr &= PT64_LVL_ADDR_MASK(iterator.level);
 			pseudo_gfn = base_addr >> PAGE_SHIFT;
-			sp = kvm_mmu_get_page(vcpu, pseudo_gfn, iterator.addr,
+            mmu_topup_memory_caches(vcpu);
+			printk(KERN_DEBUG "PREPARE ENTER kvm_mmu_get_app_page\n");
+			sp = kvm_mmu_get_app_page(vcpu, pseudo_gfn, iterator.addr,
 					      iterator.level - 1,
 					      1, ACC_ALL, iterator.sptep);
 
 			link_shadow_page(iterator.sptep, sp, true);
 		}
 	}
-	return emulate;
+    return emulate;
 }
+
+
 
 static void kvm_send_hwpoison_signal(unsigned long address, struct task_struct *tsk)
 {
@@ -3677,77 +3696,11 @@ static int tdp_page_fault(struct kvm_vcpu *vcpu, gva_t gpa, u32 error_code,
 	make_mmu_pages_available(vcpu);
 	if (likely(!force_pt_level))
 		transparent_hugepage_adjust(vcpu, &gfn, &pfn, &level);
-	r = __direct_map(vcpu, gpa, write, map_writable,
-			 level, gfn, pfn, prefault);
-	spin_unlock(&vcpu->kvm->mmu_lock);
-
-	return r;
-
-out_unlock:
-	spin_unlock(&vcpu->kvm->mmu_lock);
-	kvm_release_pfn_clean(pfn);
-	return 0;
-}
-
-static int new_tdp_page_fault(struct kvm_vcpu *vcpu, gva_t gpa, u32 error_code,
-			  bool prefault)
-{
-	pfn_t pfn;
-	int r;
-	int level;
-	int force_pt_level;
-	gfn_t gfn = gpa >> PAGE_SHIFT;
-	unsigned long mmu_seq;
-	int write = error_code & PFERR_WRITE_MASK;
-	bool map_writable;
-
-	MMU_WARN_ON(!VALID_PAGE(vcpu->arch.mmu.root_hpa));
-
-	if (unlikely(error_code & PFERR_RSVD_MASK)) {
-		r = handle_mmio_page_fault(vcpu, gpa, error_code, true);
-
-		if (likely(r != RET_MMIO_PF_INVALID))
-			return r;
-	}
-
-	r = mmu_topup_memory_caches(vcpu);
-	if (r)
-		return r;
-
-	if (mapping_level_dirty_bitmap(vcpu, gfn) ||
-	    !check_hugepage_cache_consistency(vcpu, gfn, PT_DIRECTORY_LEVEL))
-		force_pt_level = 1;
-	else
-		force_pt_level = 0;
-
-	if (likely(!force_pt_level)) {
-		level = mapping_level(vcpu, gfn);
-		if (level > PT_DIRECTORY_LEVEL &&
-		    !check_hugepage_cache_consistency(vcpu, gfn, level))
-			level = PT_DIRECTORY_LEVEL;
-		gfn &= ~(KVM_PAGES_PER_HPAGE(level) - 1);
-	} else
-		level = PT_PAGE_TABLE_LEVEL;
-
-	if (fast_page_fault(vcpu, gpa, level, error_code))
-		return 0;
-
-	mmu_seq = vcpu->kvm->mmu_notifier_seq;
-	smp_rmb();
-
-	if (try_async_pf(vcpu, prefault, gfn, gpa, &pfn, write, &map_writable))
-		return 0;
-
-	if (handle_abnormal_pfn(vcpu, 0, gfn, pfn, ACC_ALL, &r))
-		return r;
-
-	spin_lock(&vcpu->kvm->mmu_lock);
-	if (mmu_notifier_retry(vcpu->kvm, mmu_seq))
-		goto out_unlock;
-	make_mmu_pages_available(vcpu);
-	if (likely(!force_pt_level))
-		transparent_hugepage_adjust(vcpu, &gfn, &pfn, &level);
-	r = __direct_map(vcpu, gpa, write, map_writable,
+    if (vcpu->arch.mmu.in_eptp_for_app)
+    {
+        r = new_direct_map(vcpu,gpa,write,map_writable,level,gfn,pfn,prefault);
+    }else
+	   	r = __direct_map(vcpu, gpa, write, map_writable,
 			 level, gfn, pfn, prefault);
 	spin_unlock(&vcpu->kvm->mmu_lock);
 
@@ -4160,11 +4113,10 @@ static void paging32E_init_context(struct kvm_vcpu *vcpu,
 static void init_kvm_tdp_mmu(struct kvm_vcpu *vcpu)
 {
 	struct kvm_mmu *context = &vcpu->arch.mmu;
-
 	context->base_role.word = 0;
 	context->base_role.smm = is_smm(vcpu);
 	context->page_fault = tdp_page_fault;
-	context->app_page_fault = new_tdp_page_fault;
+	//context->app_page_fault = new_tdp_page_fault;
 	context->in_eptp_for_app = false;
 	context->sync_page = nonpaging_sync_page;
 	context->invlpg = nonpaging_invlpg;
@@ -4622,11 +4574,8 @@ int kvm_mmu_page_fault(struct kvm_vcpu *vcpu, gva_t cr2, u32 error_code,
 	int r, emulation_type = EMULTYPE_RETRY;
 	enum emulation_result er;
 	
-	if(vcpu->arch.mmu.in_eptp_for_app){
-		r = vcpu->arch.mmu.app_page_fault(vcpu, cr2, error_code, false);
-	}else{
-		r = vcpu->arch.mmu.page_fault(vcpu, cr2, error_code, false);	
-	}
+	r = vcpu->arch.mmu.page_fault(vcpu, cr2, error_code, false);	
+
 	if (r < 0)
 		goto out;
 
