@@ -1,0 +1,1 @@
+cmd_/usr/src/linux-4.3/arch/x86/kvm/kvm.ko := ld -r -m elf_x86_64 -T ./scripts/module-common.lds --build-id  -o /usr/src/linux-4.3/arch/x86/kvm/kvm.ko /usr/src/linux-4.3/arch/x86/kvm/kvm.o /usr/src/linux-4.3/arch/x86/kvm/kvm.mod.o

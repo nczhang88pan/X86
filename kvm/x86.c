@@ -65,6 +65,9 @@
 #include <asm/pvclock.h>
 #include <asm/div64.h>
 
+#include <asm/uaccess.h>
+#define KVM_MY_HYPERNUM 22
+
 #define MAX_IO_MSRS 256
 #define KVM_MAX_MCE_BANKS 32
 #define KVM_MCE_CAP_SUPPORTED (MCG_CTL_P | MCG_SER_P)
@@ -5701,10 +5704,32 @@ static void kvm_pv_kick_cpu_op(struct kvm *kvm, unsigned long flags, int apicid)
 	kvm_irq_delivery_to_apic(kvm, NULL, &lapic_irq, NULL);
 }
 
+static struct user_cr3_meminfo * get_app_meminfo(unsigned long cr3,unsigned long *mem)
+{
+    struct user_cr3_meminfo *app_mem = (struct user_cr3_meminfo *)vmalloc(sizeof(struct user_cr3_meminfo));
+    if(!app_mem)
+    {
+        printk(KERN_ERR "vmalloc of app_info_node is ERR\n");
+        return NULL;
+    }
+    app_mem->user_cr3 = cr3;
+    app_mem->process_mem = mem;
+    return app_mem;
+}
+
+
 int kvm_emulate_hypercall(struct kvm_vcpu *vcpu)
 {
 	unsigned long nr, a0, a1, a2, a3, ret;
 	int op_64_bit, r = 1;
+	
+	//add by cc
+	//unsigned long c_data = 0;
+	gpa_t c_address;
+	//hva_t f_address;
+	unsigned long *my_data = NULL;
+    struct user_cr3_meminfo *one_app_info = NULL;
+    struct list_head *head =NULL;
 
 	kvm_x86_ops->skip_emulated_instruction(vcpu);
 
@@ -5739,6 +5764,30 @@ int kvm_emulate_hypercall(struct kvm_vcpu *vcpu)
 		break;
 	case KVM_HC_KICK_CPU:
 		kvm_pv_kick_cpu_op(vcpu->kvm, a0, a1);
+		ret = 0;
+		break;
+	case KVM_MY_HYPERNUM:
+    
+        head = &vcpu->arch.mmu.app_info->user_info_head;
+		c_address = (gpa_t)a0;
+		my_data = (unsigned long *)vmalloc(a1);
+         
+		if(!my_data)
+		{	
+			printk(KERN_DEBUG "vmalloc of my_data is ERR!\n");
+            ret = 0;
+			break;
+		}
+      
+		kvm_read_guest_atomic(vcpu->kvm,c_address,(void *)my_data,a1*sizeof(unsigned long));
+	/*	f_address = gfn_to_hva(vcpu->kvm,c_address>>12);
+		if(!copy_from_user(&c_data,(void *)f_address,sizeof(unsigned long)))
+			printk("---------begin---------\n");
+		printk("The data ---> 0x%lx\n",c_data);*/
+        
+        one_app_info = get_app_meminfo(a2,my_data);
+        list_add_tail(&one_app_info->user_info_head,head);
+
 		ret = 0;
 		break;
 	default:
@@ -7063,7 +7112,7 @@ void kvm_arch_vcpu_free(struct kvm_vcpu *vcpu)
 
 struct kvm_vcpu *kvm_arch_vcpu_create(struct kvm *kvm,
 						unsigned int id)
-{
+{//创建vcpu
 	struct kvm_vcpu *vcpu;
 
 	if (check_tsc_unstable() && atomic_read(&kvm->online_vcpus) != 0)
@@ -7077,7 +7126,7 @@ struct kvm_vcpu *kvm_arch_vcpu_create(struct kvm *kvm,
 }
 
 int kvm_arch_vcpu_setup(struct kvm_vcpu *vcpu)
-{
+{//设置vcpu
 	int r;
 
 	kvm_vcpu_mtrr_init(vcpu);
@@ -7091,7 +7140,7 @@ int kvm_arch_vcpu_setup(struct kvm_vcpu *vcpu)
 }
 
 void kvm_arch_vcpu_postcreate(struct kvm_vcpu *vcpu)
-{
+{//
 	struct msr_data msr;
 	struct kvm *kvm = vcpu->kvm;
 
@@ -7111,7 +7160,7 @@ void kvm_arch_vcpu_postcreate(struct kvm_vcpu *vcpu)
 }
 
 void kvm_arch_vcpu_destroy(struct kvm_vcpu *vcpu)
-{
+{//删除vcpu
 	int r;
 	vcpu->arch.apf.msr_val = 0;
 
@@ -7124,7 +7173,7 @@ void kvm_arch_vcpu_destroy(struct kvm_vcpu *vcpu)
 }
 
 void kvm_vcpu_reset(struct kvm_vcpu *vcpu, bool init_event)
-{
+{//vcpu reset
 	vcpu->arch.hflags = 0;
 
 	atomic_set(&vcpu->arch.nmi_queued, 0);
@@ -7273,7 +7322,7 @@ void kvm_arch_hardware_disable(void)
 }
 
 int kvm_arch_hardware_setup(void)
-{
+{//kvm 设置hareware
 	int r;
 
 	r = kvm_x86_ops->hardware_setup();
@@ -7313,7 +7362,7 @@ bool kvm_vcpu_compatible(struct kvm_vcpu *vcpu)
 struct static_key kvm_no_apic_vcpu __read_mostly;
 
 int kvm_arch_vcpu_init(struct kvm_vcpu *vcpu)
-{
+{//vcpu 初始化
 	struct page *page;
 	struct kvm *kvm;
 	int r;
@@ -7391,7 +7440,7 @@ fail:
 }
 
 void kvm_arch_vcpu_uninit(struct kvm_vcpu *vcpu)
-{
+{//vcpu uninit
 	int idx;
 
 	kvm_pmu_destroy(vcpu);
@@ -7411,7 +7460,7 @@ void kvm_arch_sched_in(struct kvm_vcpu *vcpu, int cpu)
 }
 
 int kvm_arch_init_vm(struct kvm *kvm, unsigned long type)
-{
+{//初始化vm
 	if (type)
 		return -EINVAL;
 

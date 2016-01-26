@@ -3625,16 +3625,17 @@ static void vmx_set_cr3(struct kvm_vcpu *vcpu, unsigned long cr3)
 {
 	unsigned long guest_cr3;
 	u64 eptp;
+	u64 eptp_for_app;
 
 	guest_cr3 = cr3;
 	if (enable_ept) {
 		eptp = construct_eptp(cr3);
+		eptp_for_app = construct_eptp(vcpu->arch.mmu.root_hpa_for_app);
 		if (to_vmx(vcpu)->eptp_list_pg) {
 			u64 *eptp_list = phys_to_virt(page_to_phys(to_vmx(vcpu)->eptp_list_pg));//在kvm进行写的时候由于是虚地址，需要进行转换
-			int i;
-
-			for (i = 0; i < EPTP_LIST_NUM; ++i)
-				eptp_list[i] = eptp;
+			
+			eptp_list[0]=eptp;
+			eptp_list[1]=eptp_for_app;
 		}
 		vmcs_write64(EPT_POINTER, eptp);
 		if (is_paging(vcpu) || is_guest_mode(vcpu))
@@ -5733,28 +5734,49 @@ static int handle_task_switch(struct kvm_vcpu *vcpu)
 	return 1;
 }
 
+static unsigned long * for_each_app(struct list_head *head,unsigned long cur_cr3)
+{
+    struct list_head *pos;
+    struct user_cr3_meminfo *app;
+    
+    list_for_each(pos,head)
+    {
+        app = list_entry(pos,struct user_cr3_meminfo,user_info_head);
+        if(cur_cr3 == app->user_cr3)
+        {
+            printk(KERN_DEBUG "---> Find cr3 in pool!\n");
+            return app->process_mem;
+        }
+    }
+    return NULL;
+}
+
 static int handle_ept_violation(struct kvm_vcpu *vcpu)
 {
+	//TODO
 	unsigned long exit_qualification;
 	gpa_t gpa;
 	u32 error_code;
 	int gla_validity;
-
+    unsigned long current_cr3;
+    unsigned long *mem_info;
+    struct user_cr3_meminfo *infos;
+	gva_t gva;
+	
 	exit_qualification = vmcs_readl(EXIT_QUALIFICATION);
-
 	gla_validity = (exit_qualification >> 7) & 0x3;
 	if (gla_validity != 0x3 && gla_validity != 0x1 && gla_validity != 0) {
-		printk(KERN_ERR "EPT: Handling EPT violation failed!\n");
+		/*printk(KERN_ERR "EPT: Handling EPT violation failed!\n");
 		printk(KERN_ERR "EPT: GPA: 0x%lx, GVA: 0x%lx\n",
 			(long unsigned int)vmcs_read64(GUEST_PHYSICAL_ADDRESS),
 			vmcs_readl(GUEST_LINEAR_ADDRESS));
 		printk(KERN_ERR "EPT: Exit qualification is 0x%lx\n",
-			(long unsigned int)exit_qualification);
+			(long unsigned int)exit_qualification);*/
 		vcpu->run->exit_reason = KVM_EXIT_UNKNOWN;
 		vcpu->run->hw.hardware_exit_reason = EXIT_REASON_EPT_VIOLATION;
 		return 0;
 	}
-
+	
 	/*
 	 * EPT violation happened while executing iret from NMI,
 	 * "blocked by NMI" bit has to be set before next VM entry.
@@ -5767,6 +5789,7 @@ static int handle_ept_violation(struct kvm_vcpu *vcpu)
 		vmcs_set_bits(GUEST_INTERRUPTIBILITY_INFO, GUEST_INTR_STATE_NMI);
 
 	gpa = vmcs_read64(GUEST_PHYSICAL_ADDRESS);
+	gva = vmcs_readl(GUEST_LINEAR_ADDRESS);
 	trace_kvm_page_fault(gpa, exit_qualification);
 
 	/* It is a write fault? */
@@ -5777,7 +5800,44 @@ static int handle_ept_violation(struct kvm_vcpu *vcpu)
 	error_code |= (exit_qualification >> 3) & PFERR_PRESENT_MASK;
 
 	vcpu->arch.exit_qualification = exit_qualification;
-
+		
+	current_cr3 = vcpu->arch.mmu.get_cr3(vcpu); 
+    //处理思路
+    /*
+        1.比较cr3寄存器的值，确认是否为受保护程序的进程号
+        2.截获进程空间的地址范围，仅对该范围内的缺页中断进行处理
+    */
+    //由于下述代码当中缺少EPT切换的工作，那么Err情况会被频繁的打印。
+    infos = vcpu->arch.mmu.app_info;
+    mem_info = for_each_app(&infos->user_info_head,current_cr3);
+    if(!mem_info)
+    {
+        //printk(KERN_ERR "---> No information about this cr3\n");
+        //return 0;
+    }
+    else
+	{ 
+        //验证地址空间的范围(处理代码页，数据页的缺页中断) + 验证页面操作的性质(读，写,执行)
+        if( (gva >= *mem_info && gva <= *(mem_info + 1))  
+            || (gva >= (*mem_info + 2) && gva <= *(mem_info + 3))
+            || (gva >= (*mem_info + 4) && gva <= *(mem_info + 5)) )
+        {
+            if(!vcpu->arch.mmu.in_eptp_for_app)
+                printk(KERN_ERR "The page fault is Err1!\n");
+                            
+            vmcs_write64(EPT_POINTER,vcpu->arch.mmu.root_hpa_for_app + 0x1e);
+            vcpu->arch.mmu.in_eptp_for_app = true;
+        }else
+		{
+            if(vcpu->arch.mmu.in_eptp_for_app)
+                printk(KERN_ERR "The page fault is Err2!\n");
+                
+			vmcs_write64(EPT_POINTER,vcpu->arch.mmu.root_hpa + 0x1e);
+			vcpu->arch.mmu.in_eptp_for_app = false;
+		}
+	} 
+    //error_code可以判断是读取还是写入操作
+    //error_code & PFERR_WRITE_MASK + error_code & PFERR_FETCH_MASK	
 	return kvm_mmu_page_fault(vcpu, gpa, error_code, NULL, 0);
 }
 
@@ -7887,7 +7947,7 @@ static void dump_vmcs(void)
  * assistance.
  */
 static int vmx_handle_exit(struct kvm_vcpu *vcpu)
-{
+{//TODO 判断eptp是否在应用层改变，同步两个EPT表中的内容
 	struct vcpu_vmx *vmx = to_vmx(vcpu);
 	u32 exit_reason = vmx->exit_reason;
 	u32 vectoring_info = vmx->idt_vectoring_info;
@@ -8491,6 +8551,16 @@ static void __noclone vmx_vcpu_run(struct kvm_vcpu *vcpu)
 	/* MSR_IA32_DEBUGCTLMSR is zeroed on vmexit. Restore it if needed */
 	if (debugctlmsr)
 		update_debugctlmsr(debugctlmsr);
+		
+	if (vcpu->arch.mmu.mmu_is_stabilized){
+		vcpu->arch.mmu.root_hpa_current = vmcs_read64(EPT_POINTER);
+		if(vcpu->arch.mmu.root_hpa_current == (vcpu->arch.mmu.root_hpa_for_app + 0x1e)){
+			//printk(KERN_DEBUG "change the world");
+			vcpu->arch.mmu.in_eptp_for_app = true;
+		}else{
+			vcpu->arch.mmu.in_eptp_for_app = false;
+		}
+	}
 
 #ifndef CONFIG_X86_64
 	/*

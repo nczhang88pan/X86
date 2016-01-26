@@ -84,7 +84,7 @@ static inline gfn_t gfn_to_index(gfn_t gfn, gfn_t base_gfn, int level)
 
 #define KVM_PERMILLE_MMU_PAGES 20
 #define KVM_MIN_ALLOC_MMU_PAGES 64
-#define KVM_MMU_HASH_SHIFT 10
+#define KVM_MMU_HASH_SHIFT 11 //将kvm_MMU_HASH_SHIFT*2 最高位为1 的作为ept_for_app的hash位
 #define KVM_NUM_MMU_PAGES (1 << KVM_MMU_HASH_SHIFT)
 #define KVM_MIN_FREE_MMU_PAGES 5
 #define KVM_REFILL_PAGES 25
@@ -263,11 +263,22 @@ struct rsvd_bits_validate {
  * 32-bit).  The kvm_mmu structure abstracts the details of the current mmu
  * mode.
  */
+ 
+//---cc---
+//将受保护程序的CR3以及对应的内存布局信息通过链表进行链接
+struct user_cr3_meminfo {
+    unsigned long user_cr3;//保存了用户进程页目录指针地址
+    unsigned long *process_mem;//保存了用户进程内存布局信息
+    struct list_head user_info_head;
+};
+
 struct kvm_mmu {
 	void (*set_cr3)(struct kvm_vcpu *vcpu, unsigned long root);
 	unsigned long (*get_cr3)(struct kvm_vcpu *vcpu);
 	u64 (*get_pdptr)(struct kvm_vcpu *vcpu, int index);
 	int (*page_fault)(struct kvm_vcpu *vcpu, gva_t gva, u32 err,
+			  bool prefault);
+	int (*app_page_fault)(struct kvm_vcpu *vcpu, gva_t gva, u32 err,
 			  bool prefault);
 	void (*inject_page_fault)(struct kvm_vcpu *vcpu,
 				  struct x86_exception *fault);
@@ -281,10 +292,18 @@ struct kvm_mmu {
 	void (*update_pte)(struct kvm_vcpu *vcpu, struct kvm_mmu_page *sp,
 			   u64 *spte, const void *pte);
 	hpa_t root_hpa;
+	hpa_t root_hpa_for_app;//隔离应用的hpa
+	hpa_t root_hpa_current;//当前正在使用的hpa
+	bool  in_eptp_for_app ;//当前是否切换到了eptp2
+	bool  mmu_is_stabilized;//已经进入到了操作系统中，并稳定
 	int root_level;
 	int shadow_root_level;
 	union kvm_mmu_page_role base_role;
 	bool direct_map;
+    unsigned long page_fault_cr3;//app进程对应的cr3
+    
+    struct user_cr3_meminfo *app_info;
+    gva_t user_gva;//保存了用户发生缺页中断时的客户机线性地址
 
 	/*
 	 * Bitmap; bit set = permission fault

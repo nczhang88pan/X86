@@ -3,9 +3,4 @@ tools/test_get_len
 tools/insn_sanity
 purgatory/kexec-purgatory.c
 purgatory/purgatory.ro
-*.o
-*.ko
-*.cmd
 
-*.tags
-kvm/.tags_sorted_by_file

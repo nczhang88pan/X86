@@ -1,0 +1,2 @@
+kernel//usr/src/linux-4.3/arch/x86/kvm/kvm.ko
+kernel//usr/src/linux-4.3/arch/x86/kvm/kvm-intel.ko
