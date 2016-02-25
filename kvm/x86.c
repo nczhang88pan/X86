@@ -5768,9 +5768,11 @@ int kvm_emulate_hypercall(struct kvm_vcpu *vcpu)
 		break;
 	case KVM_MY_HYPERNUM:
     
+		printk(KERN_DEBUG "Handle the hypercall!\n");
         head = &vcpu->arch.mmu.app_info->user_info_head;
 		c_address = (gpa_t)a0;
 		my_data = (unsigned long *)vmalloc(a1);
+		printk(KERN_DEBUG "Sum of data ---> 0x%lx\n",a1);
          
 		if(!my_data)
 		{	
@@ -5895,11 +5897,17 @@ static int inject_pending_event(struct kvm_vcpu *vcpu, bool req_int_win)
 	}
 
 	if (vcpu->arch.nmi_injected) {
+		//--cc--
+		//if(vcpu->arch.mmu.in_eptp_for_app)
+			//printk(KERN_DEBUG "nmi_injected!");
 		kvm_x86_ops->set_nmi(vcpu);
 		return 0;
 	}
 
 	if (vcpu->arch.interrupt.pending) {
+		//--cc--
+		//if(vcpu->arch.mmu.in_eptp_for_app)
+			//printk(KERN_DEBUG "interrupt.pengding!");
 		kvm_x86_ops->set_irq(vcpu);
 		return 0;
 	}
@@ -6326,7 +6334,12 @@ static int vcpu_enter_guest(struct kvm_vcpu *vcpu)
 		}
 
 		if (inject_pending_event(vcpu, req_int_win) != 0)
+		{	
+			//--cc--
 			req_immediate_exit = true;
+			//if(vcpu->arch.mmu.in_eptp_for_app)
+				//printk(KERN_DEBUG "EPTP1 : inject_pending_event!");
+		}
 		/* enable NMI/IRQ window open exits if needed */
 		else if (vcpu->arch.nmi_pending)
 			kvm_x86_ops->enable_nmi_window(vcpu);
@@ -6525,8 +6538,11 @@ static int vcpu_run(struct kvm_vcpu *vcpu)
 
 		clear_bit(KVM_REQ_PENDING_TIMER, &vcpu->requests);
 		if (kvm_cpu_has_pending_timer(vcpu))
-			kvm_inject_pending_timer_irqs(vcpu);
-
+		{
+			//--cc--
+			if(!vcpu->arch.mmu.in_eptp_for_app)
+				kvm_inject_pending_timer_irqs(vcpu);
+		}
 		if (dm_request_for_irq_injection(vcpu)) {
 			r = -EINTR;
 			vcpu->run->exit_reason = KVM_EXIT_INTR;

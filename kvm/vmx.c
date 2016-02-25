@@ -4873,7 +4873,10 @@ static void vmx_inject_irq(struct kvm_vcpu *vcpu)
 	int irq = vcpu->arch.interrupt.nr;
 
 	trace_kvm_inj_virq(irq);
-
+	//--cc--
+	if(vcpu->arch.mmu.in_eptp_for_app)
+		printk(KERN_DEBUG "There is wrong in vmx_inject_irq!");
+	
 	++vcpu->stat.irq_injections;
 	if (vmx->rmode.vm86_active) {
 		int inc_eip = 0;
@@ -5744,13 +5747,13 @@ static unsigned long * for_each_app(struct list_head *head,unsigned long cur_cr3
         app = list_entry(pos,struct user_cr3_meminfo,user_info_head);
         if(cur_cr3 == app->user_cr3)
         {
-            printk(KERN_DEBUG "---> Find cr3 in pool!\n");
+            //printk(KERN_DEBUG "---> Find cr3 in pool!\n");
             return app->process_mem;
         }
     }
     return NULL;
 }
-
+u64 eptp_old=0;
 static int handle_ept_violation(struct kvm_vcpu *vcpu)
 {
 	//TODO
@@ -5762,6 +5765,7 @@ static int handle_ept_violation(struct kvm_vcpu *vcpu)
     unsigned long *mem_info;
     struct user_cr3_meminfo *infos;
 	gva_t gva;
+	//u64 eptp_old=0;
 	
 	exit_qualification = vmcs_readl(EXIT_QUALIFICATION);
 	gla_validity = (exit_qualification >> 7) & 0x3;
@@ -5801,7 +5805,7 @@ static int handle_ept_violation(struct kvm_vcpu *vcpu)
 
 	vcpu->arch.exit_qualification = exit_qualification;
 		
-	current_cr3 = vcpu->arch.mmu.get_cr3(vcpu); 
+	current_cr3 = vcpu->arch.mmu.get_cr3(vcpu);
     //处理思路
     /*
         1.比较cr3寄存器的值，确认是否为受保护程序的进程号
@@ -5810,6 +5814,7 @@ static int handle_ept_violation(struct kvm_vcpu *vcpu)
     //由于下述代码当中缺少EPT切换的工作，那么Err情况会被频繁的打印。
     infos = vcpu->arch.mmu.app_info;
     mem_info = for_each_app(&infos->user_info_head,current_cr3);
+	//printk(KERN_DEBUG "GVA --> 0x%lx\n",gva);
     if(!mem_info)
     {
         //printk(KERN_ERR "---> No information about this cr3\n");
@@ -5818,26 +5823,39 @@ static int handle_ept_violation(struct kvm_vcpu *vcpu)
     else
 	{ 
         //验证地址空间的范围(处理代码页，数据页的缺页中断) + 验证页面操作的性质(读，写,执行)
+		printk(KERN_DEBUG "Current eptp ---> 0x%llx\n",vmcs_read64(EPT_POINTER));
         if( (gva >= *mem_info && gva <= *(mem_info + 1))  
             || (gva >= (*mem_info + 2) && gva <= *(mem_info + 3))
             || (gva >= (*mem_info + 4) && gva <= *(mem_info + 5)) )
         {
-            if(!vcpu->arch.mmu.in_eptp_for_app)
+        	if(!vcpu->arch.mmu.in_eptp_for_app)
                 printk(KERN_ERR "The page fault is Err1!\n");
                             
-            vmcs_write64(EPT_POINTER,vcpu->arch.mmu.root_hpa_for_app + 0x1e);
-            vcpu->arch.mmu.in_eptp_for_app = true;
+        //    vmcs_write64(EPT_POINTER,vcpu->arch.mmu.root_hpa_for_app + 0x1e);
+        //    vcpu->arch.mmu.in_eptp_for_app = true;
+			printk(KERN_DEBUG "The page fault is for app! ----> gva: 0x%lx\n",gva);
         }else
 		{
             if(vcpu->arch.mmu.in_eptp_for_app)
                 printk(KERN_ERR "The page fault is Err2!\n");
                 
-			vmcs_write64(EPT_POINTER,vcpu->arch.mmu.root_hpa + 0x1e);
-			vcpu->arch.mmu.in_eptp_for_app = false;
+		//	vmcs_write64(EPT_POINTER,vcpu->arch.mmu.root_hpa + 0x1e);
+		//	vcpu->arch.mmu.in_eptp_for_app = false;
+			printk(KERN_DEBUG "The page fault is for others!  ----> gva: 0x%lx\n",gva);
 		}
 	} 
-    //error_code可以判断是读取还是写入操作
-    //error_code & PFERR_WRITE_MASK + error_code & PFERR_FETCH_MASK	
+	
+/*	if(eptp_old == 0)
+	{
+		eptp_old = vmcs_read64(EPT_POINTER);
+	}
+	if(eptp_old != vmcs_read64(EPT_POINTER))
+	{
+		printk(KERN_DEBUG "Current eptp ---> 0x%lx\n",eptp_old);
+		eptp_old = vmcs_read64(EPT_POINTER);
+		printk(KERN_DEBUG "Current eptp ---> 0x%lx\n",eptp_old);
+	}*/
+	
 	return kvm_mmu_page_fault(vcpu, gpa, error_code, NULL, 0);
 }
 
@@ -7946,11 +7964,18 @@ static void dump_vmcs(void)
  * The guest has exited.  See if we can fix it or if we need userspace
  * assistance.
  */
+
+#define setbit(x,y) x|=(0x1 << y) //置位
+#define clrbit(x,y) x&=~(0x1 << y) //清零
+int num=0;
 static int vmx_handle_exit(struct kvm_vcpu *vcpu)
 {//TODO 判断eptp是否在应用层改变，同步两个EPT表中的内容
 	struct vcpu_vmx *vmx = to_vmx(vcpu);
 	u32 exit_reason = vmx->exit_reason;
 	u32 vectoring_info = vmx->idt_vectoring_info;
+    u32 read_from_vmcs1;
+    u32 read_from_vmcs2;
+	//int num=0;
 
 	/*
 	 * Flush logged GPAs PML buffer, this will make dirty_bitmap more
@@ -7959,6 +7984,54 @@ static int vmx_handle_exit(struct kvm_vcpu *vcpu)
 	 * mode as if vcpus is in root mode, the PML buffer must has been
 	 * flushed already.
 	 */
+     
+    //--cc--
+    if(vcpu->arch.mmu.in_eptp_for_app)
+    {
+        if(exit_reason != 48 && exit_reason != 30 && exit_reason != 32)
+        {
+            printk(KERN_DEBUG "exit_reason --> %d",exit_reason);
+        }
+    }
+    
+    //--cc-- delay interrupt
+    if(vcpu->arch.mmu.in_eptp_for_app)
+    {
+       //阻塞普通中断以及NMI中断
+	   if(num == 0)
+       {
+		   read_from_vmcs1 = vmcs_read32(GUEST_INTERRUPTIBILITY_INFO);
+       	   setbit(read_from_vmcs1,0);
+       	   setbit(read_from_vmcs1,3);
+           vmcs_write32(GUEST_INTERRUPTIBILITY_INFO,read_from_vmcs1);
+		   printk(KERN_DEBUG "interrupt state -> %d",vmx_interrupt_allowed(vcpu));
+       	   //开启interrupt window
+       	   /*read_from_vmcs2 = vmcs_read32(CPU_BASED_VM_EXEC_CONTROL);
+       	   setbit(read_from_vmcs2,2);
+       	   setbit(read_from_vmcs2,22);
+       	   vmcs_write32(CPU_BASED_VM_EXEC_CONTROL,read_from_vmcs2);*/
+		   kvm_x86_ops->enable_nmi_window(vcpu);
+		   kvm_x86_ops->enable_irq_window(vcpu);
+           num = 1;
+           printk(KERN_DEBUG "close interrupt!");  
+		}
+    }else
+    {
+		if(num == 1)
+        {
+			read_from_vmcs1 = vmcs_read32(GUEST_INTERRUPTIBILITY_INFO);
+        	clrbit(read_from_vmcs1,0);
+        	clrbit(read_from_vmcs1,3);
+        	vmcs_write32(GUEST_INTERRUPTIBILITY_INFO,read_from_vmcs1);
+			
+			/*read_from_vmcs2 = vmcs_read32(CPU_BASED_VM_EXEC_CONTROL);
+			clrbit(read_from_vmcs2,2);
+			clrbit(read_from_vmcs2,22);
+			vmcs_write32(CPU_BASED_VM_EXEC_CONTROL,read_from_vmcs2);*/
+			num = 0;
+		}	
+    }
+		   
 	if (enable_pml)
 		vmx_flush_pml_buffer(vcpu);
 
