@@ -269,6 +269,7 @@ struct rsvd_bits_validate {
 struct user_cr3_meminfo {
     unsigned long user_cr3;//保存了用户进程页目录指针地址
     unsigned long *process_mem;//保存了用户进程内存布局信息
+    unsigned long data_num;
     struct list_head user_info_head;
 };
 
@@ -300,7 +301,8 @@ struct kvm_mmu {
 	int shadow_root_level;
 	union kvm_mmu_page_role base_role;
 	bool direct_map;
-    unsigned long page_fault_cr3;//app进程对应的cr3
+    unsigned long prev_app_cr3;//app进程对应的cr3
+    int prev_app_status;
     
     struct user_cr3_meminfo *app_info;
     gva_t user_gva;//保存了用户发生缺页中断时的客户机线性地址

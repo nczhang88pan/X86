@@ -2867,8 +2867,6 @@ static int new_direct_map(struct kvm_vcpu *vcpu, gpa_t v, int write,
     return emulate;
 }
 
-
-
 static void kvm_send_hwpoison_signal(unsigned long address, struct task_struct *tsk)
 {
 	siginfo_t info;
@@ -4154,8 +4152,11 @@ static void init_kvm_tdp_mmu(struct kvm_vcpu *vcpu)
 	context->get_pdptr = kvm_pdptr_read;         //读取pdptr
 	context->inject_page_fault = kvm_inject_page_fault;
 	context->mmu_is_stabilized = false;
+    context->prev_app_cr3 = 0xffffffff;
+    context->prev_app_status = 0;
     //--cc--
     init_app_meminfo(&context->app_info);
+    
     
 	if (!is_paging(vcpu)) {
 		context->nx = false;

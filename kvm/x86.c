@@ -5704,7 +5704,7 @@ static void kvm_pv_kick_cpu_op(struct kvm *kvm, unsigned long flags, int apicid)
 	kvm_irq_delivery_to_apic(kvm, NULL, &lapic_irq, NULL);
 }
 
-static struct user_cr3_meminfo * get_app_meminfo(unsigned long cr3,unsigned long *mem)
+static struct user_cr3_meminfo * get_app_meminfo(unsigned long cr3,unsigned long *mem,unsigned long num)
 {
     struct user_cr3_meminfo *app_mem = (struct user_cr3_meminfo *)vmalloc(sizeof(struct user_cr3_meminfo));
     if(!app_mem)
@@ -5714,6 +5714,7 @@ static struct user_cr3_meminfo * get_app_meminfo(unsigned long cr3,unsigned long
     }
     app_mem->user_cr3 = cr3;
     app_mem->process_mem = mem;
+    app_mem->data_num = num;
     return app_mem;
 }
 
@@ -5771,7 +5772,7 @@ int kvm_emulate_hypercall(struct kvm_vcpu *vcpu)
 		printk(KERN_DEBUG "Handle the hypercall!\n");
         head = &vcpu->arch.mmu.app_info->user_info_head;
 		c_address = (gpa_t)a0;
-		my_data = (unsigned long *)vmalloc(a1);
+		my_data = (unsigned long *)vmalloc(a1+3);
 		printk(KERN_DEBUG "Sum of data ---> 0x%lx\n",a1);
          
 		if(!my_data)
@@ -5781,13 +5782,13 @@ int kvm_emulate_hypercall(struct kvm_vcpu *vcpu)
 			break;
 		}
       
-		kvm_read_guest_atomic(vcpu->kvm,c_address,(void *)my_data,a1*sizeof(unsigned long));
+		kvm_read_guest_atomic(vcpu->kvm,c_address,(void *)my_data,(a1+3)*sizeof(unsigned long));
 	/*	f_address = gfn_to_hva(vcpu->kvm,c_address>>12);
 		if(!copy_from_user(&c_data,(void *)f_address,sizeof(unsigned long)))
 			printk("---------begin---------\n");
 		printk("The data ---> 0x%lx\n",c_data);*/
         
-        one_app_info = get_app_meminfo(a2,my_data);
+        one_app_info = get_app_meminfo(a2,my_data,a1);
         list_add_tail(&one_app_info->user_info_head,head);
 
 		ret = 0;
@@ -5897,17 +5898,11 @@ static int inject_pending_event(struct kvm_vcpu *vcpu, bool req_int_win)
 	}
 
 	if (vcpu->arch.nmi_injected) {
-		//--cc--
-		//if(vcpu->arch.mmu.in_eptp_for_app)
-			//printk(KERN_DEBUG "nmi_injected!");
 		kvm_x86_ops->set_nmi(vcpu);
 		return 0;
 	}
 
 	if (vcpu->arch.interrupt.pending) {
-		//--cc--
-		//if(vcpu->arch.mmu.in_eptp_for_app)
-			//printk(KERN_DEBUG "interrupt.pengding!");
 		kvm_x86_ops->set_irq(vcpu);
 		return 0;
 	}
@@ -6333,13 +6328,8 @@ static int vcpu_enter_guest(struct kvm_vcpu *vcpu)
 			goto out;
 		}
 
-		if (inject_pending_event(vcpu, req_int_win) != 0)
-		{	
-			//--cc--
+		if (inject_pending_event(vcpu, req_int_win) != 0)	
 			req_immediate_exit = true;
-			//if(vcpu->arch.mmu.in_eptp_for_app)
-				//printk(KERN_DEBUG "EPTP1 : inject_pending_event!");
-		}
 		/* enable NMI/IRQ window open exits if needed */
 		else if (vcpu->arch.nmi_pending)
 			kvm_x86_ops->enable_nmi_window(vcpu);
@@ -6539,9 +6529,7 @@ static int vcpu_run(struct kvm_vcpu *vcpu)
 		clear_bit(KVM_REQ_PENDING_TIMER, &vcpu->requests);
 		if (kvm_cpu_has_pending_timer(vcpu))
 		{
-			//--cc--
-			if(!vcpu->arch.mmu.in_eptp_for_app)
-				kvm_inject_pending_timer_irqs(vcpu);
+			kvm_inject_pending_timer_irqs(vcpu);
 		}
 		if (dm_request_for_irq_injection(vcpu)) {
 			r = -EINTR;
