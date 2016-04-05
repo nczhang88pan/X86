@@ -263,6 +263,16 @@ struct rsvd_bits_validate {
  * 32-bit).  The kvm_mmu structure abstracts the details of the current mmu
  * mode.
  */
+ 
+//---cc---
+//将受保护程序的CR3以及对应的内存布局信息通过链表进行链接
+struct user_cr3_meminfo {
+    unsigned long user_cr3;//保存了用户进程页目录指针地址
+    unsigned long *process_mem;//保存了用户进程内存布局信息
+    unsigned long data_num;
+    struct list_head user_info_head;
+};
+
 struct kvm_mmu {
 	void (*set_cr3)(struct kvm_vcpu *vcpu, unsigned long root);
 	unsigned long (*get_cr3)(struct kvm_vcpu *vcpu);
@@ -291,6 +301,11 @@ struct kvm_mmu {
 	int shadow_root_level;
 	union kvm_mmu_page_role base_role;
 	bool direct_map;
+    unsigned long prev_app_cr3;//app进程对应的cr3
+    int prev_app_status;
+    
+    struct user_cr3_meminfo *app_info;
+    gva_t user_gva;//保存了用户发生缺页中断时的客户机线性地址
 
 	/*
 	 * Bitmap; bit set = permission fault

@@ -41,6 +41,8 @@
 #include <asm/cmpxchg.h>
 #include <asm/io.h>
 #include <asm/vmx.h>
+#include <linux/vmalloc.h>
+#include <linux/list.h>
 
 /*
  * When setting this variable to true it enables Two-Dimensional-Paging
@@ -2092,7 +2094,7 @@ static struct kvm_mmu_page *kvm_mmu_get_app_page(struct kvm_vcpu *vcpu,
 	role.access = access;
 	
 	for_each_app_gfn_sp(vcpu->kvm, sp, gfn) {
-		printk(KERN_DEBUG "GO BACK from for_each_app_gfn_sp\n");
+	
 		if (is_obsolete_sp(vcpu->kvm, sp))
 			continue;
 
@@ -2157,9 +2159,6 @@ static struct kvm_mmu_page *kvm_mmu_get_page(struct kvm_vcpu *vcpu,
 		role.quadrant = quadrant;
 	}
 	for_each_gfn_sp(vcpu->kvm, sp, gfn) {
-        //TEST
-        if(vcpu->arch.mmu.in_eptp_for_app)
-            printk(KERN_DEBUG "In the for_each_gfn_sp!\n");
              
 		if (is_obsolete_sp(vcpu->kvm, sp))
 			continue;
@@ -2670,7 +2669,7 @@ static void mmu_set_spte(struct kvm_vcpu *vcpu, u64 *sptep,
 	if (set_spte(vcpu, sptep, pte_access, level, gfn, pfn, speculative,
 	      true, host_writable)) {
 		if (write_fault)
-			*emulate = 1;
+			*emulate = 1;   
 		kvm_make_request(KVM_REQ_TLB_FLUSH, vcpu);
 	}
 
@@ -2714,7 +2713,7 @@ static int direct_pte_prefetch_many(struct kvm_vcpu *vcpu,
 {
 	struct page *pages[PTE_PREFETCH_NUM];
 	struct kvm_memory_slot *slot;
-	unsigned access = sp->role.access;
+	unsigned access = sp->role.access;//记录的是页表页的存取权限
 	int i, ret;
 	gfn_t gfn;
 
@@ -2839,6 +2838,10 @@ static int new_direct_map(struct kvm_vcpu *vcpu, gpa_t v, int write,
     }
     
     for_each_shadow_entry_sec(vcpu, (u64)gfn << PAGE_SHIFT, iterator) {
+		
+		/*printk(KERN_DEBUG "level --> %d\n",level);
+		printk(KERN_DEBUG "iterator.level --> %d\n",iterator.level);
+		printk(KERN_DEBUG "iterator.*sptep --> 0x%llx\n",*iterator.sptep);*/
 		if (iterator.level == level) {
 			mmu_set_spte(vcpu, iterator.sptep, ACC_ALL,
 				     write, &emulate, level, gfn, pfn,
@@ -2854,7 +2857,6 @@ static int new_direct_map(struct kvm_vcpu *vcpu, gpa_t v, int write,
 			base_addr &= PT64_LVL_ADDR_MASK(iterator.level);
 			pseudo_gfn = base_addr >> PAGE_SHIFT;
             mmu_topup_memory_caches(vcpu);
-			printk(KERN_DEBUG "PREPARE ENTER kvm_mmu_get_app_page\n");
 			sp = kvm_mmu_get_app_page(vcpu, pseudo_gfn, iterator.addr,
 					      iterator.level - 1,
 					      1, ACC_ALL, iterator.sptep);
@@ -2864,8 +2866,6 @@ static int new_direct_map(struct kvm_vcpu *vcpu, gpa_t v, int write,
 	}
     return emulate;
 }
-
-
 
 static void kvm_send_hwpoison_signal(unsigned long address, struct task_struct *tsk)
 {
@@ -3649,7 +3649,7 @@ static int tdp_page_fault(struct kvm_vcpu *vcpu, gva_t gpa, u32 error_code,
 	unsigned long mmu_seq;
 	int write = error_code & PFERR_WRITE_MASK;
 	bool map_writable;
-
+   
 	MMU_WARN_ON(!VALID_PAGE(vcpu->arch.mmu.root_hpa));
 
 	if (unlikely(error_code & PFERR_RSVD_MASK)) {
@@ -3677,7 +3677,7 @@ static int tdp_page_fault(struct kvm_vcpu *vcpu, gva_t gpa, u32 error_code,
 		gfn &= ~(KVM_PAGES_PER_HPAGE(level) - 1);
 	} else
 		level = PT_PAGE_TABLE_LEVEL;
-
+    
 	if (fast_page_fault(vcpu, gpa, level, error_code))
 		return 0;
 
@@ -3696,6 +3696,8 @@ static int tdp_page_fault(struct kvm_vcpu *vcpu, gva_t gpa, u32 error_code,
 	make_mmu_pages_available(vcpu);
 	if (likely(!force_pt_level))
 		transparent_hugepage_adjust(vcpu, &gfn, &pfn, &level);
+	
+        
     if (vcpu->arch.mmu.in_eptp_for_app)
     {
         r = new_direct_map(vcpu,gpa,write,map_writable,level,gfn,pfn,prefault);
@@ -4110,13 +4112,32 @@ static void paging32E_init_context(struct kvm_vcpu *vcpu,
 	paging64_init_context_common(vcpu, context, PT32E_ROOT_LEVEL);
 }
 
+static void init_app_meminfo(struct user_cr3_meminfo **info)
+{
+	struct list_head *head =NULL;
+	if(*info)
+	{	
+		printk(KERN_ERR "old app_info is not release!\n");
+		return;
+	}
+    *info = (struct user_cr3_meminfo *)vmalloc(sizeof(struct user_cr3_meminfo));
+    if(*info == NULL)
+    {
+        printk(KERN_ERR "Failed to malloc app_info memory!\n");
+        return;
+    }
+    head = &((*info)->user_info_head);
+    INIT_LIST_HEAD(head);
+    (*info)->user_cr3 = 0xffffffff;
+    (*info)->process_mem = NULL;
+}
+
 static void init_kvm_tdp_mmu(struct kvm_vcpu *vcpu)
 {
 	struct kvm_mmu *context = &vcpu->arch.mmu;
 	context->base_role.word = 0;
 	context->base_role.smm = is_smm(vcpu);
 	context->page_fault = tdp_page_fault;
-	//context->app_page_fault = new_tdp_page_fault;
 	context->in_eptp_for_app = false;
 	context->sync_page = nonpaging_sync_page;
 	context->invlpg = nonpaging_invlpg;
@@ -4131,7 +4152,12 @@ static void init_kvm_tdp_mmu(struct kvm_vcpu *vcpu)
 	context->get_pdptr = kvm_pdptr_read;         //读取pdptr
 	context->inject_page_fault = kvm_inject_page_fault;
 	context->mmu_is_stabilized = false;
-
+    context->prev_app_cr3 = 0xffffffff;
+    context->prev_app_status = 0;
+    //--cc--
+    init_app_meminfo(&context->app_info);
+    
+    
 	if (!is_paging(vcpu)) {
 		context->nx = false;
 		context->gva_to_gpa = nonpaging_gva_to_gpa;
@@ -4274,6 +4300,8 @@ static void init_kvm_mmu(struct kvm_vcpu *vcpu)
 void kvm_mmu_reset_context(struct kvm_vcpu *vcpu)
 {
 	kvm_mmu_unload(vcpu);
+	vfree(vcpu->arch.mmu.app_info);
+	vcpu->arch.mmu.app_info = NULL;
 	init_kvm_mmu(vcpu);
 }
 EXPORT_SYMBOL_GPL(kvm_mmu_reset_context);
@@ -4666,7 +4694,6 @@ int kvm_mmu_create(struct kvm_vcpu *vcpu)
 void kvm_mmu_setup(struct kvm_vcpu *vcpu)
 {
 	MMU_WARN_ON(VALID_PAGE(vcpu->arch.mmu.root_hpa));
-
 	init_kvm_mmu(vcpu);
 }
 
