@@ -779,7 +779,7 @@ int kvm_set_cr3(struct kvm_vcpu *vcpu, unsigned long cr3)
 	} else if (is_pae(vcpu) && is_paging(vcpu) &&
 		   !load_pdptrs(vcpu, vcpu->arch.walk_mmu, cr3))
 		return 1;
-
+		
 	vcpu->arch.cr3 = cr3;
 	__set_bit(VCPU_EXREG_CR3, (ulong *)&vcpu->arch.regs_avail);
 	kvm_mmu_new_cr3(vcpu);
@@ -3983,6 +3983,7 @@ gpa_t kvm_mmu_gva_to_gpa_system(struct kvm_vcpu *vcpu, gva_t gva,
 {
 	return vcpu->arch.walk_mmu->gva_to_gpa(vcpu, gva, 0, exception);
 }
+EXPORT_SYMBOL_GPL(kvm_mmu_gva_to_gpa_system);
 
 static int kvm_read_guest_virt_helper(gva_t addr, void *val, unsigned int bytes,
 				      struct kvm_vcpu *vcpu, u32 access,
@@ -5731,6 +5732,7 @@ int kvm_emulate_hypercall(struct kvm_vcpu *vcpu)
 	unsigned long *my_data = NULL;
     struct user_cr3_meminfo *one_app_info = NULL;
     struct list_head *head =NULL;
+	u32 cr3_load_exit_info = 0;
 
 	kvm_x86_ops->skip_emulated_instruction(vcpu);
 
@@ -5790,7 +5792,16 @@ int kvm_emulate_hypercall(struct kvm_vcpu *vcpu)
         
         one_app_info = get_app_meminfo(a2,my_data,a1);
         list_add_tail(&one_app_info->user_info_head,head);
-
+		
+		cr3_load_exit_info = kvm_x86_ops->ops_vmcs_read32(CPU_BASED_VM_EXEC_CONTROL) & CPU_BASED_CR3_LOAD_EXITING;
+    	if(cr3_load_exit_info == 0)
+    	{
+        	cr3_load_exit_info = kvm_x86_ops->ops_vmcs_read32(CPU_BASED_VM_EXEC_CONTROL) | CPU_BASED_CR3_LOAD_EXITING;
+        	kvm_x86_ops->ops_vmcs_write32(CPU_BASED_VM_EXEC_CONTROL,cr3_load_exit_info);
+    	}
+		kvm_x86_ops->ops_vmcs_write32(CR3_TARGET_COUNT,1);
+		kvm_x86_ops->ops_vmcs_write64(CR3_TARGET_VALUE0,a2);
+		
 		ret = 0;
 		break;
 	default:

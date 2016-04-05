@@ -162,6 +162,8 @@ module_param(ple_window_max, int, S_IRUGO);
 
 extern const ulong vmx_return;
 
+//--cc--
+static struct user_cr3_meminfo* for_each_app(struct list_head *head,unsigned long cur_cr3);
 #define NR_AUTOLOAD_MSRS 8
 #define VMCS02_POOL_SIZE 1
 
@@ -1419,6 +1421,12 @@ static __always_inline u16 vmcs_read16(unsigned long field)
 static __always_inline u32 vmcs_read32(unsigned long field)
 {
 	return vmcs_readl(field);
+}
+
+//--cc--
+static u32 app_vmcs_read32(unsigned long field)
+{
+	return vmcs_read32(field);
 }
 
 static __always_inline u64 vmcs_read64(unsigned long field)
@@ -3064,6 +3072,7 @@ static __init int setup_vmcs_config(struct vmcs_config *vmcs_conf)
 	if (_cpu_based_2nd_exec_control & SECONDARY_EXEC_ENABLE_EPT) {
 		/* CR3 accesses and invlpg don't need to cause VM Exits when EPT
 		   enabled */
+		//--cc-- 
 		_cpu_based_exec_control &= ~(CPU_BASED_CR3_LOAD_EXITING |
 					     CPU_BASED_CR3_STORE_EXITING |
 					     CPU_BASED_INVLPG_EXITING);
@@ -3471,12 +3480,21 @@ static void exit_lmode(struct kvm_vcpu *vcpu)
 #endif
 
 static void vmx_flush_tlb(struct kvm_vcpu *vcpu)
-{//对当前的EPTP tlb 进行flush TODO rethink
+{
 	vpid_sync_context(to_vmx(vcpu));
 	if (enable_ept) {
-		if (!VALID_PAGE(vcpu->arch.mmu.root_hpa))
-			return;
-		ept_sync_context(construct_eptp(vcpu->arch.mmu.root_hpa));
+		if(vcpu->arch.mmu.in_eptp_for_app)
+		{
+			if(!VALID_PAGE(vcpu->arch.mmu.root_hpa_for_app))
+				return;
+			ept_sync_context(construct_eptp(vcpu->arch.mmu.root_hpa_for_app));
+			ept_sync_context(construct_eptp(vcpu->arch.mmu.root_hpa));
+		}else
+		{
+			if (!VALID_PAGE(vcpu->arch.mmu.root_hpa))
+				return;
+			ept_sync_context(construct_eptp(vcpu->arch.mmu.root_hpa));
+		}
 	}
 }
 
@@ -5307,12 +5325,18 @@ static int handle_cr(struct kvm_vcpu *vcpu)
 	int cr;
 	int reg;
 	int err;
+    //--cc--
+    unsigned long last_cr3 = 0;
+    struct user_cr3_meminfo *infos;
+    struct user_cr3_meminfo *app_infos;
 
 	exit_qualification = vmcs_readl(EXIT_QUALIFICATION);
 	cr = exit_qualification & 15;
 	reg = (exit_qualification >> 8) & 15;
 	switch ((exit_qualification >> 4) & 3) {
 	case 0: /* mov to cr */
+		//--cc--
+		
 		val = kvm_register_readl(vcpu, reg);
 		trace_kvm_cr_write(cr, val);
 		switch (cr) {
@@ -5321,8 +5345,36 @@ static int handle_cr(struct kvm_vcpu *vcpu)
 			kvm_complete_insn_gp(vcpu, err);
 			return 1;
 		case 3:
-			err = kvm_set_cr3(vcpu, val);
-			kvm_complete_insn_gp(vcpu, err);
+	        if(vcpu->arch.mmu.mmu_is_stabilized)
+		    {
+			    //--cc--
+                last_cr3 = vmcs_readl(GUEST_CR3);
+                infos = vcpu->arch.mmu.app_info;
+                app_infos = for_each_app(&infos->user_info_head,last_cr3);
+                if(app_infos)
+                {
+                    printk(KERN_DEBUG "find cr3 in handle_cr! --- cr3:%lx\n",last_cr3);
+                    if(vmcs_read32(CPU_BASED_VM_EXEC_CONTROL) & CPU_BASED_CR3_LOAD_EXITING)
+                    {
+                        if(vmcs_read64(CR3_TARGET_VALUE0) == last_cr3)
+                            vmcs_write32(CPU_BASED_VM_EXEC_CONTROL,vmcs_read32(CPU_BASED_VM_EXEC_CONTROL) & (~CPU_BASED_CR3_LOAD_EXITING));
+                        else
+                            printk(KERN_DEBUG "Error --> CR3_TARGET_VALUE0:%llx != last_cr3:%lx\n",vmcs_read64(CR3_TARGET_VALUE0),last_cr3);
+                    }
+                    else
+                        printk(KERN_DEBUG "CPU_BASED_CR3_LOAD_EXITING statu is Err!\n");
+                }
+				
+			    vmx_flush_tlb(vcpu);
+			    vmcs_writel(GUEST_CR3,val);
+			    printk(KERN_DEBUG "I'm here! --- %lx\n",val);
+			    kvm_complete_insn_gp(vcpu, 0);
+		    }
+		    else
+		    {
+			    err = kvm_set_cr3(vcpu, val);
+			    kvm_complete_insn_gp(vcpu, err);
+		    }
 			return 1;
 		case 4:
 			err = handle_set_cr4(vcpu, val);
@@ -5736,22 +5788,30 @@ static int handle_task_switch(struct kvm_vcpu *vcpu)
 
 static struct user_cr3_meminfo* for_each_app(struct list_head *head,unsigned long cur_cr3)
 {
-    struct list_head *pos;
-    struct user_cr3_meminfo *app;
-    
+    struct list_head *pos = NULL;
+    struct user_cr3_meminfo *app = NULL;
+    struct user_cr3_meminfo *res = NULL;
     list_for_each(pos,head)
     {
         app = list_entry(pos,struct user_cr3_meminfo,user_info_head);
         if(cur_cr3 == app->user_cr3)
         {
             //printk(KERN_DEBUG "---> Find cr3 in pool!\n");
-            return app;
+           	res = app;
         }
     }
-    return NULL;
+    return res;
 }
 
-
+		
+static gpa_t gva_to_gpa_app(struct kvm_vcpu *vcpu, gva_t app_point)
+{
+	gpa_t app_gpa;
+	struct x86_exception *app_exception = NULL;
+	app_gpa = kvm_mmu_gva_to_gpa_system(vcpu,app_point,app_exception);
+	return app_gpa;
+}
+//--cc--
 static int handle_ept_violation(struct kvm_vcpu *vcpu)
 {
 	//TODO
@@ -5762,13 +5822,20 @@ static int handle_ept_violation(struct kvm_vcpu *vcpu)
     unsigned long current_cr3;
     unsigned long *mem_info;
     unsigned long *info_mem;
+    unsigned long *brk_mem;
     unsigned long datanum;
- 
+    //--cc--
+    static int cc_test;
+    static u64 current_guest_rip;
+    int brk_info;
     struct user_cr3_meminfo *infos;
     struct user_cr3_meminfo *app_infos;
 	gva_t gva;
-	//u64 eptp_old=0;
+	gva_t app_stack = 0;
+	unsigned long *app_hva = NULL;
 	
+	
+	brk_info = 0;
 	exit_qualification = vmcs_readl(EXIT_QUALIFICATION);
 	gla_validity = (exit_qualification >> 7) & 0x3;
 	if (gla_validity != 0x3 && gla_validity != 0x1 && gla_validity != 0) {
@@ -5797,7 +5864,7 @@ static int handle_ept_violation(struct kvm_vcpu *vcpu)
 	gpa = vmcs_read64(GUEST_PHYSICAL_ADDRESS);
 	gva = vmcs_readl(GUEST_LINEAR_ADDRESS);
 	trace_kvm_page_fault(gpa, exit_qualification);
-
+	
 	/* It is a write fault? */
 	error_code = exit_qualification & PFERR_WRITE_MASK;
 	/* It is a fetch fault? */
@@ -5808,7 +5875,9 @@ static int handle_ept_violation(struct kvm_vcpu *vcpu)
 	vcpu->arch.exit_qualification = exit_qualification;
 		
 	current_cr3 = vcpu->arch.mmu.get_cr3(vcpu);
-    
+	//if((gva >> 12) == 0x400)
+	//	printk(KERN_DEBUG "all Page_fault **** gva:0x%lx,gpa:0x%llx,cr3:0x%lx\n",gva,gpa,current_cr3);
+			
     infos = vcpu->arch.mmu.app_info;
     app_infos = for_each_app(&infos->user_info_head,current_cr3);
     //time intr导致的任务切换
@@ -5857,19 +5926,13 @@ static int handle_ept_violation(struct kvm_vcpu *vcpu)
 		}  
     }
     
-    //处理思路[地址空间比较]
-    /*
-        1.比较cr3寄存器的值，确认是否为受保护程序的进程号
-        2.截获进程空间的地址范围，仅对该范围内的缺页中断进行处理
-    */
     if(app_infos)
 	{   
-        //printk(KERN_DEBUG "Current eptp ---> 0x%llx\n",vmcs_read64(EPT_POINTER));
-        //验证地址空间的范围(处理代码页，数据页的缺页中断) + 验证页面操作的性质(读，写,执行)
-        //通过gva的属性来体现页面的权限
-		printk_once(KERN_DEBUG "current_cr3 --> 0x%lx",current_cr3);
+		printk_once(KERN_DEBUG "CR3 ---> 0x%lx\n",current_cr3);
+		
         vcpu->arch.mmu.prev_app_status = 1;
         mem_info = app_infos->process_mem;
+        brk_mem = mem_info + 7;
         datanum = app_infos->data_num;
         if( (gva >= *mem_info && gva <= *(mem_info + 1))  
             || (gva >= (*mem_info + 3) && gva <= *(mem_info + 4))
@@ -5880,12 +5943,18 @@ static int handle_ept_violation(struct kvm_vcpu *vcpu)
                 //当前属于EPTP0状态中，允许对数据页进行缺页中断处理，不允许对代码页进行中断。
                 if(gva >= *mem_info && gva <= *(mem_info + 1))
                 {
-                    printk(KERN_ALERT "The page fault is Err1:code page in eptp0 --> gva:0x%lx\n",gva);
+					//Waiting For Testing!
+                    //printk(KERN_ALERT "||exec coge page in eptp0 - recall --> gva:0x%lx gpa:0x%llx\n",gva,gpa);
+                    vmcs_write64(EPT_POINTER,vcpu->arch.mmu.root_hpa_for_app + 0x1e);
+                    cc_test = 1;
+                    //读取栈顶指针，保留。下次EPTP状态切换时，检查该值
+                    current_guest_rip = vmcs_read64(GUEST_RIP);
+					//printk(KERN_ALERT "RIP -->:0x%llx\n",current_guest_rip);            
                 }else
-                    printk(KERN_DEBUG "The page fault:data page in eptp0");
+                    ;//printk(KERN_DEBUG "||The page fault:data page in eptp0 --> gva:0x%lx gpa:0x%llx\n",gva,gpa);
             }else
 			{
-				printk(KERN_DEBUG "app_code,data in eptp1 --> gva:0x%lx\n",gva);
+				//printk(KERN_DEBUG "||app_code,data in eptp1 --> gva:0x%lx gpa:0x%llx\n",gva,gpa);
 			}
         }
 		else 
@@ -5893,26 +5962,63 @@ static int handle_ept_violation(struct kvm_vcpu *vcpu)
 			if(gva >= *(mem_info + datanum - 9) && gva <= *(mem_info + datanum - 8))
 			{
 				if(vcpu->arch.mmu.in_eptp_for_app)
-					printk(KERN_DEBUG "The stack page fault in EPTP1!\n");
+					;//printk(KERN_DEBUG "||The stack page fault in EPTP1! --> gva:0x%lx gpa:0x%llx\n",gva,gpa);
 				else
-					printk(KERN_DEBUG "The stack page fault in EPTP0!\n");
+					;//printk(KERN_DEBUG "||The stack page fault in EPTP0! --> gva:0x%lx gpa:0x%llx\n",gva,gpa);
 			}
 			else
 			{
-				if(vcpu->arch.mmu.in_eptp_for_app && (gva > *(mem_info + datanum + 1)))
-					printk(KERN_ALERT "The page fault is Err2:ku page in eptp1! --> gva:0x%lx\n",gva);
+                //这里存在Bug,程序堆空间肯定不属于上述部分，然而堆在eptp1作映射是正常的，这里不应该报错误
+				if(vcpu->arch.mmu.in_eptp_for_app)
+                {
+                    while(brk_mem < (mem_info + datanum - 9))
+                    {
+                        if(gva >= *brk_mem && gva <= *(brk_mem + 2))
+                        {
+                            //printk(KERN_DEBUG "||The brk page fault in EPTP1! --> gva:0x%lx gpa:0x%llx\n",gva,gpa);
+                            brk_info  = 1;
+                            break;
+                        }
+                        brk_mem += 3;
+                    }
+                    if(brk_info == 0)
+                    {
+                 	   //recall 
+                       if(cc_test == 1)
+                       {
+						   app_stack = gva_to_gpa_app(vcpu,(unsigned long)vmcs_read64(GUEST_RSP));
+						   app_hva = (unsigned long*)kvm_vcpu_gfn_to_hva(vcpu,gpa_to_gfn(app_stack));
+                           printk(KERN_ALERT "recall return ---> gva:0x%lx\n",gva);
+						   printk(KERN_ALERT "return address in Stack ---> 0x%lx : 0x%lx : 0x%lx : 0x%lx : 0x%lx",*app_hva,*(app_hva+1),*(app_hva+2),*(app_hva+3),*(app_hva+4));
+                           vmcs_write64(EPT_POINTER,vcpu->arch.mmu.root_hpa + 0x1e);
+                           cc_test = 0;
+                       }else
+                       {
+                           if((gva >> 48) != 0xffff)
+                               ;//printk(KERN_ALERT "||The page fault is Err2:ku page in eptp1! --> gva:0x%lx,gpa:0x%llx\n",gva,gpa);
+					       else
+						   	   ;//printk(KERN_DEBUG "||The os page fualt in eptp1! --> gva:0x%lx,gpa:0x%llx\n",gva,gpa);
+                       }
+                    }               
+                }
                 else
-                    printk(KERN_DEBUG "ku,os and other page fault --> gva:0x%lx\n",gva);
+                {   
+                    if((gva >> 48) != 0xffff)
+                        ;//printk(KERN_DEBUG "||ku,os and other page fault --> gva:0x%lx gpa:0x%llx\n",gva,gpa);
+					//ignore os page fault in eptp0
+                }
 			}
 		}
 	}
     else
     {
         vcpu->arch.mmu.prev_app_status = 0;
-        //printk(KERN_DEBUG "CR3 ---> 0x%lx\n",current_cr3);
     }
 
 	vcpu->arch.mmu.prev_app_cr3 = current_cr3;
+    //--EPTP0,EPTP1同步
+	if(vcpu->arch.mmu.in_eptp_for_app)
+		;//printk(KERN_DEBUG "gva : %llx --- gpa : %llx\n",gva,gpa);
 	return kvm_mmu_page_fault(vcpu, gpa, error_code, NULL, 0);
 }
 
@@ -8028,7 +8134,7 @@ static int vmx_handle_exit(struct kvm_vcpu *vcpu)
 	struct vcpu_vmx *vmx = to_vmx(vcpu);
 	u32 exit_reason = vmx->exit_reason;
 	u32 vectoring_info = vmx->idt_vectoring_info;
-
+	
 	/*
 	 * Flush logged GPAs PML buffer, this will make dirty_bitmap more
 	 * updated. Another good is, in kvm_vm_ioctl_get_dirty_log, before
@@ -8036,6 +8142,14 @@ static int vmx_handle_exit(struct kvm_vcpu *vcpu)
 	 * mode as if vcpus is in root mode, the PML buffer must has been
 	 * flushed already.
 	 */
+     
+    //--cc--CPU_BASED_CR3_LOAD_EXITING保证为1
+  /* 	u32 cr3_load_exit_info = vmcs_read32(CPU_BASED_VM_EXEC_CONTROL) & CPU_BASED_CR3_LOAD_EXITING;
+    if(cr3_load_exit_info == 0)
+    {
+        cr3_load_exit_info = vmcs_read32(CPU_BASED_VM_EXEC_CONTROL) | CPU_BASED_CR3_LOAD_EXITING;
+        vmcs_write32(CPU_BASED_VM_EXEC_CONTROL,cr3_load_exit_info);
+    }*/
 		   
 	if (enable_pml)
 		vmx_flush_pml_buffer(vcpu);
@@ -8050,7 +8164,7 @@ static int vmx_handle_exit(struct kvm_vcpu *vcpu)
 				  vmcs_readl(EXIT_QUALIFICATION));
 		return 1;
 	}
-
+	
 	if (exit_reason & VMX_EXIT_REASONS_FAILED_VMENTRY) {
 		dump_vmcs();
 		vcpu->run->exit_reason = KVM_EXIT_FAIL_ENTRY;
@@ -10632,6 +10746,11 @@ static struct kvm_x86_ops vmx_x86_ops = {
 	.enable_log_dirty_pt_masked = vmx_enable_log_dirty_pt_masked,
 
 	.pmu_ops = &intel_pmu_ops,
+	
+	//--cc--
+	.ops_vmcs_write32 = vmcs_write32,
+	.ops_vmcs_write64 = vmcs_write64,
+	.ops_vmcs_read32 = app_vmcs_read32,
 };
 
 static int __init vmx_init(void)

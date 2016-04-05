@@ -273,6 +273,12 @@ struct user_cr3_meminfo {
     struct list_head user_info_head;
 };
 
+struct same_page_spte {
+    u64* eptp0_sptep;
+    u64* eptp1_sptep;
+    struct list_head same_spte_head;
+};
+
 struct kvm_mmu {
 	void (*set_cr3)(struct kvm_vcpu *vcpu, unsigned long root);
 	unsigned long (*get_cr3)(struct kvm_vcpu *vcpu);
@@ -306,7 +312,7 @@ struct kvm_mmu {
     
     struct user_cr3_meminfo *app_info;
     gva_t user_gva;//保存了用户发生缺页中断时的客户机线性地址
-
+    struct same_page_spte *app_os_same_page;
 	/*
 	 * Bitmap; bit set = permission fault
 	 * Byte index: page fault error code [4:1]
@@ -881,7 +887,11 @@ struct kvm_x86_ops {
 	int (*check_nested_events)(struct kvm_vcpu *vcpu, bool external_intr);
 
 	void (*sched_in)(struct kvm_vcpu *kvm, int cpu);
-
+	//--cc--
+	void (*ops_vmcs_write32)(unsigned long ops,u32 ops_value);
+	void (*ops_vmcs_write64)(unsigned long ops,u64 ops_value);
+	u32 (*ops_vmcs_read32)(unsigned long ops);
+	
 	/*
 	 * Arch-specific dirty logging hooks. These hooks are only supposed to
 	 * be valid if the specific arch has hardware-accelerated dirty logging
@@ -1029,6 +1039,8 @@ int kvm_task_switch(struct kvm_vcpu *vcpu, u16 tss_selector, int idt_index,
 
 int kvm_set_cr0(struct kvm_vcpu *vcpu, unsigned long cr0);
 int kvm_set_cr3(struct kvm_vcpu *vcpu, unsigned long cr3);
+//--cc--
+int kvm_new_set_cr3(struct kvm_vcpu *vcpu, unsigned long cr3);
 int kvm_set_cr4(struct kvm_vcpu *vcpu, unsigned long cr4);
 int kvm_set_cr8(struct kvm_vcpu *vcpu, unsigned long cr8);
 int kvm_set_dr(struct kvm_vcpu *vcpu, int dr, unsigned long val);

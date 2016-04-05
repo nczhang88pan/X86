@@ -1142,10 +1142,63 @@ static u64 *rmap_get_next(struct rmap_iterator *iter)
 		_spte_ && ({BUG_ON(!is_shadow_present_pte(*_spte_)); 1;});  \
 			_spte_ = rmap_get_next(_iter_))
 
+//--cc--
+
+static struct same_page_spte* for_each_spte(struct list_head *head,u64 *eptpp)
+{
+    struct list_head *pos;
+    struct same_page_spte *currents;
+    
+    list_for_each(pos,head)
+    {
+        currents = list_entry(pos,struct same_page_spte,same_spte_head);
+        if((currents->eptp0_sptep == eptpp) || (currents->eptp1_sptep == eptpp))
+            return currents;
+    }
+    return NULL;
+}
+//--cc--
 static void drop_spte(struct kvm *kvm, u64 *sptep)
 {
+    struct same_page_spte *res = NULL;
+    struct kvm_vcpu *vvcpu = (struct kvm_vcpu *)kvm;
+    struct same_page_spte *aos;
+    aos = vvcpu->arch.mmu.app_os_same_page;
+    if(vvcpu->arch.mmu.mmu_is_stabilized)
+    {
+        if(aos)
+		{
+            res = for_each_spte(&(aos->same_spte_head),sptep);
+		}
+        else 
+            printk(KERN_DEBUG "INIT same_page_spte is wrong!\n");
+    }
+    if(res)
+    {
+		if(res->eptp0_sptep == sptep)
+        {
+			if (mmu_spte_clear_track_bits(res->eptp1_sptep))
+			{
+				rmap_remove(kvm, res->eptp1_sptep);
+				list_del(&(res->same_spte_head));
+				vfree(res);
+				res = NULL;
+			}
+		}else
+		{
+			if (mmu_spte_clear_track_bits(res->eptp0_sptep))
+			{
+				rmap_remove(kvm, res->eptp0_sptep);
+				list_del(&(res->same_spte_head));
+				vfree(res);
+				res = NULL;
+			}
+		}
+    }
 	if (mmu_spte_clear_track_bits(sptep))
+	{
 		rmap_remove(kvm, sptep);
+	}
 }
 
 
@@ -1674,7 +1727,8 @@ static inline void kvm_mod_used_mmu_pages(struct kvm *kvm, int nr)
 }
 
 static void kvm_mmu_free_page(struct kvm_mmu_page *sp)
-{//TODO mmu_page free时的清理工作
+{
+    //--cc--当EPTP1当中的页面或者EPTP0需要进行删除时，那么另外的EPTP中的相应页面也需要进行删除，防止重复映
 	MMU_WARN_ON(!is_empty_shadow_page(sp->spt));
 	hlist_del(&sp->hash_link);
 	list_del(&sp->link);
@@ -1695,7 +1749,7 @@ static void mmu_page_add_parent_pte(struct kvm_vcpu *vcpu,
 	if (!parent_pte)
 		return;
 
-	pte_list_add(vcpu, parent_pte, &sp->parent_ptes);
+	 pte_list_add(vcpu, parent_pte, &sp->parent_ptes);
 }
 
 static void mmu_page_remove_parent_pte(struct kvm_mmu_page *sp,
@@ -2310,7 +2364,6 @@ static bool mmu_page_zap_pte(struct kvm *kvm, struct kvm_mmu_page *sp,
 {
 	u64 pte;
 	struct kvm_mmu_page *child;
-
 	pte = *spte;
 	if (is_shadow_present_pte(pte)) {
 		if (is_last_spte(pte, sp->role.level)) {
@@ -2326,7 +2379,7 @@ static bool mmu_page_zap_pte(struct kvm *kvm, struct kvm_mmu_page *sp,
 
 	if (is_mmio_spte(pte))
 		mmu_spte_clear_no_track(spte);
-
+		
 	return false;
 }
 
@@ -2414,12 +2467,51 @@ static int kvm_mmu_prepare_zap_page(struct kvm *kvm, struct kvm_mmu_page *sp,
 	sp->role.invalid = 1;
 	return ret;
 }
+//--cc--
+/*static struct kvm_mmu_page* gfn_to_kmpage(struct kvm *kvm,struct kvm_mmu_page *km_sp,int s)
+{
+    struct kvm_mmu_page *sp_gfn = NULL;
+    gfn_t sps_gfn;
+	union kvm_mmu_page_role role;
+    
+    sps_gfn = km_sp->gfn;
+	role = ((struct kvm_vcpu *)(&kvm))->arch.mmu.base_role;
+	if(((struct kvm_vcpu *)(&kvm))->arch.mmu.mmu_is_stabilized && s == 1)
+    {
+        for_each_app_gfn_sp(kvm,sp_gfn,sps_gfn) {
+			
+			if (is_obsolete_sp(kvm,sp_gfn))
+			{
+				printk(KERN_DEBUG "1---1\n");
+				continue;
+			}
+			 	
+			if (sp_gfn->role.word != role.word)
+			{
+				printk(KERN_DEBUG "1---2\n");
+				continue;
+			}
+				
+			printk(KERN_DEBUG "sp_gfn1 ---> %p\n",sp_gfn);
+            return sp_gfn;
+        }
+		printk(KERN_DEBUG "I'm here!\n");
+    }else if(s == 0)
+    {
+        for_each_gfn_sp(kvm,sp_gfn,sps_gfn) {
+			printk(KERN_DEBUG "sp_gfn0 ---> %p\n",sp_gfn);
+            return sp_gfn;
+        }
+    }
+    
+    return NULL;   
+}*/
 
 static void kvm_mmu_commit_zap_page(struct kvm *kvm,
 				    struct list_head *invalid_list)
-{
+{   
 	struct kvm_mmu_page *sp, *nsp;
-
+   
 	if (list_empty(invalid_list))
 		return;
 
@@ -2777,6 +2869,123 @@ static void direct_pte_prefetch(struct kvm_vcpu *vcpu, u64 *sptep)
 	__direct_pte_prefetch(vcpu, sp, sptep);
 }
 
+static void shadow_walk_init_app(struct kvm_shadow_walk_iterator *iterator,struct kvm_vcpu *vcpu,u64 addr)
+{
+	iterator->addr = addr;
+	iterator->shadow_addr = vcpu->arch.mmu.root_hpa_for_app;
+	iterator->level = vcpu->arch.mmu.shadow_root_level;
+}
+
+static void shadow_walk_init_sys(struct kvm_shadow_walk_iterator *iterator,struct kvm_vcpu *vcpu,u64 addr)
+{
+	iterator->addr = addr;
+	iterator->shadow_addr = vcpu->arch.mmu.root_hpa;
+	iterator->level = vcpu->arch.mmu.shadow_root_level;
+}
+
+static bool shadow_walk_okay_app(struct kvm_shadow_walk_iterator *iterator)
+{
+	if(iterator->level <  PT_PAGE_TABLE_LEVEL)
+		return false;
+
+	iterator->index = SHADOW_PT_INDEX(iterator->addr,iterator->level);
+	iterator->sptep = ((u64*)__va(iterator->shadow_addr)) + iterator->index;
+
+	return true;
+}
+
+static void __shadow_walk_next_app(struct kvm_shadow_walk_iterator *iterator, u64 spte)
+{
+	if (is_last_spte(spte,iterator->level)) {
+		iterator->level = 0;
+		return;
+	}
+
+	iterator->shadow_addr = spte & PT64_BASE_ADDR_MASK;
+	--iterator->level;
+}
+
+static void shadow_walk_next_app(struct kvm_shadow_walk_iterator *iterator)
+{
+	return __shadow_walk_next_app(iterator,*iterator->sptep);
+}
+
+
+#define for_each_shadow_entry_app(_vcpu, _addr, _walker) \
+for (shadow_walk_init_app(&(_walker), _vcpu, _addr);	\
+	 shadow_walk_okay_app(&(_walker));					\
+	 shadow_walk_next_app(&(_walker)))
+	 
+#define for_each_shadow_entry_sys(_vcpu,_addr,_walker) \
+for (shadow_walk_init_sys(&(_walker), _vcpu, _addr);	\
+	 shadow_walk_okay_app(&(_walker));					\
+	 shadow_walk_next_app(&(_walker)))
+
+
+static int find_gpa_eptp1(struct kvm_vcpu *vcpu,gfn_t gfn)
+{
+	struct kvm_shadow_walk_iterator iterator;
+
+	if(!VALID_PAGE(vcpu->arch.mmu.root_hpa_for_app))
+		return 0;
+
+	for_each_shadow_entry_app(vcpu,(u64)gfn << PAGE_SHIFT, iterator) {
+		
+		if((iterator.level == 1) && ((*iterator.sptep)!=0))
+		{
+			//printk(KERN_DEBUG "In eptp0 <--- Small Table Find_in_eptp1! gfn : %llx, spte : %llx\n",(u64)gfn << PAGE_SHIFT,*iterator.sptep);
+			return 1;
+		}
+
+		if(!is_shadow_present_pte(*iterator.sptep))
+		{
+			//printk(KERN_DEBUG "The iterator.sptep is not present! --- %d\n",iterator.level);
+			return 0;
+		}
+	}
+	
+	if(iterator.level == 0)
+	{
+		//printk(KERN_DEBUG "In eptp0 <--- Huge Table Find_in_eptp1! gfn : %llx, spte : %llx\n",(u64)gfn << PAGE_SHIFT,*iterator.sptep);
+		return 1;
+	}
+
+	return -1;
+}
+
+static int find_gpa_eptp0(struct kvm_vcpu *vcpu,gfn_t gfn,u64 *pspte)
+{
+	struct kvm_shadow_walk_iterator iterator;
+
+	if(!VALID_PAGE(vcpu->arch.mmu.root_hpa))
+		return 0;
+
+	for_each_shadow_entry_sys(vcpu,(u64)gfn << PAGE_SHIFT, iterator) {
+		if((iterator.level == 1) && ((*iterator.sptep)!=0))
+		{
+			//printk(KERN_DEBUG "In eptp1 ---> Small Table Find_in_eptp0! gfn : %llx, spte : %llx\n",(u64)gfn << PAGE_SHIFT,*iterator.sptep);
+            *pspte = *iterator.sptep;
+			return 1;
+		}
+
+		if(!is_shadow_present_pte(*iterator.sptep))
+		{
+			//printk(KERN_DEBUG "The iterator.sptep is not present! --- %d\n",iterator.level);
+			return 0;
+		}
+	}
+	
+	if(iterator.level == 0)
+	{
+        //libc以及一些共享库是以2MB页面单位分配到内存当中。下面的输出将展示这个过程。以及包括部分系统内核部分的代码，实际运行中大页是很常见的。
+		//printk(KERN_DEBUG "In eptp1 ---> Huge Table Find_in_eptp0! gfn : %llx, spte : %llx\n",(u64)gfn << PAGE_SHIFT,*iterator.sptep);
+        *pspte = *iterator.sptep;
+		return 1;
+	}
+	
+	return -1;
+}
+
 static int __direct_map(struct kvm_vcpu *vcpu, gpa_t v, int write,
 			int map_writable, int level, gfn_t gfn, pfn_t pfn,
 			bool prefault)
@@ -2812,6 +3021,13 @@ static int __direct_map(struct kvm_vcpu *vcpu, gpa_t v, int write,
 			link_shadow_page(iterator.sptep, sp, true);
 		}
 	}
+
+	if(vcpu->arch.mmu.mmu_is_stabilized)
+	{
+		if(find_gpa_eptp1(vcpu,gfn) > 0)	
+        //只有在回调函数当中会出现这种情况，先在EPTP1中映射，然后在EPTP0中进行映射。
+			;//printk(KERN_DEBUG "I'm find! --- gpa: %llx,gfn_t: %llx\n",v,gfn);
+	}
 	return emulate;
 }
 
@@ -2824,30 +3040,51 @@ static int new_direct_map(struct kvm_vcpu *vcpu, gpa_t v, int write,
 	struct kvm_mmu_page *sp;
 	int emulate = 0;
 	gfn_t pseudo_gfn;
+    u64 app_spte = 0;
+    u64 *p_spte = &app_spte;
+	
+    struct same_page_spte *one_page_info = NULL;
+    struct list_head *head = NULL;
     
+    
+    //printk(KERN_DEBUG "new_direct_map : v:%llx,gfn:%llx --- level:%d",v,gfn,level);
     if(!vcpu->arch.mmu.in_eptp_for_app)
     {
         printk(KERN_ERR "Not in the new_eptp!\n");
         return 0;
     }
     
-    if(!VALID_PAGE(vcpu->arch.mmu.root_hpa_current))
+    if(!VALID_PAGE(vcpu->arch.mmu.root_hpa_for_app))
     {
         printk(KERN_ERR "The new_eptp not init right!");
         return 0;
     }
     
+    //--cc--
+    /*
+        在EPTP1开始映射时，检查该地址是否已经在EPTP0中进行了映射。实际运行当中，该输出会大规模的出现，主要原因在于EPTP1中映射了一大部分EPTP0的内容。
+    */
+	if(find_gpa_eptp0(vcpu,gfn,p_spte) > 0)
+		;
+    
     for_each_shadow_entry_sec(vcpu, (u64)gfn << PAGE_SHIFT, iterator) {
 		
-		/*printk(KERN_DEBUG "level --> %d\n",level);
-		printk(KERN_DEBUG "iterator.level --> %d\n",iterator.level);
-		printk(KERN_DEBUG "iterator.*sptep --> 0x%llx\n",*iterator.sptep);*/
 		if (iterator.level == level) {
 			mmu_set_spte(vcpu, iterator.sptep, ACC_ALL,
 				     write, &emulate, level, gfn, pfn,
 				     prefault, map_writable);
 			direct_pte_prefetch(vcpu, iterator.sptep);
-			++vcpu->stat.pf_fixed;
+            ++vcpu->stat.pf_fixed;
+            if(*p_spte)
+            {
+                //printk(KERN_DEBUG "---- eptp1:sptep : %p ----\n",iterator.sptep);
+                head = &(vcpu->arch.mmu.app_os_same_page->same_spte_head);
+                one_page_info = (struct same_page_spte *)vmalloc(sizeof(struct same_page_spte));
+                one_page_info->eptp0_sptep = p_spte;
+                one_page_info->eptp1_sptep = iterator.sptep;
+                list_add_tail(&one_page_info->same_spte_head,head);
+                //printk(KERN_DEBUG "---- eptp0 and eptp1 sptep into struct! ----");
+            }
 			break;
 		}
 		drop_large_spte(vcpu, iterator.sptep);
@@ -2864,7 +3101,8 @@ static int new_direct_map(struct kvm_vcpu *vcpu, gpa_t v, int write,
 			link_shadow_page(iterator.sptep, sp, true);
 		}
 	}
-    return emulate;
+	//printk(KERN_DEBUG "-----------------------------------------------------------------------------\n");
+	return emulate;
 }
 
 static void kvm_send_hwpoison_signal(unsigned long address, struct task_struct *tsk)
@@ -3649,7 +3887,7 @@ static int tdp_page_fault(struct kvm_vcpu *vcpu, gva_t gpa, u32 error_code,
 	unsigned long mmu_seq;
 	int write = error_code & PFERR_WRITE_MASK;
 	bool map_writable;
-   
+   	//--test--
 	MMU_WARN_ON(!VALID_PAGE(vcpu->arch.mmu.root_hpa));
 
 	if (unlikely(error_code & PFERR_RSVD_MASK)) {
@@ -3695,15 +3933,19 @@ static int tdp_page_fault(struct kvm_vcpu *vcpu, gva_t gpa, u32 error_code,
 		goto out_unlock;
 	make_mmu_pages_available(vcpu);
 	if (likely(!force_pt_level))
+	{
 		transparent_hugepage_adjust(vcpu, &gfn, &pfn, &level);
+	}
 	
         
     if (vcpu->arch.mmu.in_eptp_for_app)
     {
         r = new_direct_map(vcpu,gpa,write,map_writable,level,gfn,pfn,prefault);
     }else
-	   	r = __direct_map(vcpu, gpa, write, map_writable,
+	{
+		r = __direct_map(vcpu, gpa, write, map_writable,
 			 level, gfn, pfn, prefault);
+	}
 	spin_unlock(&vcpu->kvm->mmu_lock);
 
 	return r;
@@ -4112,9 +4354,10 @@ static void paging32E_init_context(struct kvm_vcpu *vcpu,
 	paging64_init_context_common(vcpu, context, PT32E_ROOT_LEVEL);
 }
 
+//--cc--
 static void init_app_meminfo(struct user_cr3_meminfo **info)
 {
-	struct list_head *head =NULL;
+	struct list_head *head = NULL;
 	if(*info)
 	{	
 		printk(KERN_ERR "old app_info is not release!\n");
@@ -4130,6 +4373,24 @@ static void init_app_meminfo(struct user_cr3_meminfo **info)
     INIT_LIST_HEAD(head);
     (*info)->user_cr3 = 0xffffffff;
     (*info)->process_mem = NULL;
+}
+
+//--cc--
+static void init_same_spteinfo(struct same_page_spte **spteinfo)
+{
+    struct list_head *head = NULL;
+    if(*spteinfo)
+        return;
+    *spteinfo = (struct same_page_spte *)vmalloc(sizeof(struct same_page_spte));
+    if(*spteinfo == NULL)
+    {
+        printk(KERN_ERR "Failed to malloc same_page_spte memory!\n");
+        return;
+    }
+    head = &((*spteinfo)->same_spte_head);
+    INIT_LIST_HEAD(head);
+    (*spteinfo)->eptp0_sptep = NULL;
+    (*spteinfo)->eptp1_sptep = NULL;
 }
 
 static void init_kvm_tdp_mmu(struct kvm_vcpu *vcpu)
@@ -4156,6 +4417,7 @@ static void init_kvm_tdp_mmu(struct kvm_vcpu *vcpu)
     context->prev_app_status = 0;
     //--cc--
     init_app_meminfo(&context->app_info);
+    init_same_spteinfo(&context->app_os_same_page);
     
     
 	if (!is_paging(vcpu)) {
@@ -4492,14 +4754,14 @@ void kvm_mmu_pte_write(struct kvm_vcpu *vcpu, gpa_t gpa,
 	int npte;
 	bool remote_flush, local_flush, zap_page;
 	union kvm_mmu_page_role mask = { };
-
+	
 	mask.cr0_wp = 1;
 	mask.cr4_pae = 1;
 	mask.nxe = 1;
 	mask.smep_andnot_wp = 1;
 	mask.smap_andnot_wp = 1;
 	mask.smm = 1;
-
+	
 	/*
 	 * If we don't have indirect shadow pages, it means no page is
 	 * write-protected, so we can exit simply.
@@ -4842,7 +5104,6 @@ restart:
 	for_each_rmap_spte(rmapp, &iter, sptep) {
 		sp = page_header(__pa(sptep));
 		pfn = spte_to_pfn(*sptep);
-
 		/*
 		 * We cannot do huge page mapping for indirect shadow pages,
 		 * which are found on the last rmap (level = 1) when not using
